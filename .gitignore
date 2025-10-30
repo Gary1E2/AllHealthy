@@ -1,0 +1,11 @@
+# ---- Python ----
+__pycache__/
+
+# ---- Firebase credentials ----
+diet-app-sg-firebase-adminsdk-fbsvc-f840993dc2.json
+
+# ---- Model folders ----
+models/
+
+# ---- Image folders ----
+images/
