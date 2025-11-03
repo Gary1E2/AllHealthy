@@ -4,8 +4,9 @@ __pycache__/
 # ---- Firebase credentials ----
 diet-app-sg-firebase-adminsdk-fbsvc-f840993dc2.json
 
-# ---- Model folders ----
+# ---- Folders ----
 models/
-
-# ---- Image folders ----
 images/
+.venv/
+bin/
+.buildozer/
