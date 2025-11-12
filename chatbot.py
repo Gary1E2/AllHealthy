@@ -1,165 +1,114 @@
 import os
 import json
-import torch
-from transformers import AutoProcessor, Qwen2VLForConditionalGeneration
+import requests
 from PIL import Image
-import warnings
-
-# Silence warnings
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
-warnings.filterwarnings("ignore", category=FutureWarning)
+import base64
+from io import BytesIO
+import traceback
 
 # ==============================
 # CONFIG
 # ==============================
-MODEL_DIR = os.path.join(os.path.dirname(__file__), "models", "Qwen2-VL-2B-Instruct")
+NGROK_URL = "https://unsurgical-semiliberally-myron.ngrok-free.dev"
+REQUEST_TIMEOUT = 500
+CHAT_TIMEOUT = 120
 
-DEFAULT_ROLE_PROMPT = """
-You are a nutrition analysis assistant.
-
-Estimate the nutritional values of the food shown in any image as accurately as possible.
-
-Respond ONLY in **exactly** the following JSON format, with numeric values only:
-{
-  "Calories": <number in kcal>,
-  "Protein": <number in grams>,
-  "Carbs": <number in grams>,
-  "Fats": <number in grams>
-}
-Do not include any other text or explanation.
-"""
-
-# ==============================
-# MODEL SINGLETON
-# ==============================
-_model_instance = None
-_processor_instance = None
-
-def load_model():
-    """Load and return the model and processor (singleton pattern)"""
-    global _model_instance, _processor_instance
-    
-    if _model_instance is None or _processor_instance is None:
-        print("[LLM] Loading processor...")
-        _processor_instance = AutoProcessor.from_pretrained(MODEL_DIR, use_fast=True)
-        
-        print("[LLM] Loading model (this may take a while)...")
-        _model_instance = Qwen2VLForConditionalGeneration.from_pretrained(
-            MODEL_DIR,
-            dtype=torch.float32,
-            device_map="auto",
-            low_cpu_mem_usage=True
-        )
-        print("[LLM] Model loaded successfully")
-    
-    return _model_instance, _processor_instance
-
-# ==============================
-# NUTRITION ESTIMATION
-# ==============================
-def estimate_nutrition(image_path, user_prompt=None, role_prompt=None):
-    """
-    Estimate nutrition from an image.
-    
-    Args:
-        image_path (str): Path to the image file
-        user_prompt (str, optional): Custom user prompt. Defaults to asking for macronutrient breakdown.
-        role_prompt (str, optional): Custom system/role prompt. Defaults to nutrition assistant prompt.
-    
-    Returns:
-        dict: Nutrition data with keys: Calories, Protein, Carbs, Fats
-        None: If estimation fails
-    """
-    try:
-        # Load image
-        if not os.path.exists(image_path):
-            print(f"[LLM ERROR] Image not found: {image_path}")
-            return None
-        
-        print(f"[LLM] Loading image: {image_path}")
-        image = Image.open(image_path).convert("RGB").resize((224, 224))
-        
-        # Use default prompts if not provided
-        if role_prompt is None:
-            role_prompt = DEFAULT_ROLE_PROMPT
-        if user_prompt is None:
-            user_prompt = "Estimate the macronutrient breakdown of my meal."
-        
-        # Load model
-        model, processor = load_model()
-        
-        # Prepare messages
-        messages = [
-            {"role": "system", "content": role_prompt.strip()},
-            {"role": "user", "content": [
-                {"type": "image", "image": image},
-                {"type": "text", "text": user_prompt.strip()}
-            ]}
-        ]
-        
-        print("[LLM] Generating nutrition estimate...")
-        text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        inputs = processor(
-            text=[text],
-            images=[image],
-            return_tensors="pt",
-            padding=True
-        ).to(model.device)
-        
-        # Generate
-        outputs = model.generate(
-            **inputs,
-            do_sample=False,
-            max_new_tokens=64,
-            temperature=0.7,
-            top_p=0.9
-        )
-        
-        # Decode
-        generated_text = processor.batch_decode(outputs, skip_special_tokens=True)[0]
-        
-        # Extract JSON from response
-        json_start = generated_text.rfind('{')
-        if json_start != -1:
-            json_str = generated_text[json_start:]
-            json_end = json_str.find('}') + 1
-            json_str = json_str[:json_end]
-            
-            nutrition_data = json.loads(json_str)
-            print(f"[LLM] Nutrition estimate: {json.dumps(nutrition_data, indent=2)}")
-            return nutrition_data
-        else:
-            print("[LLM ERROR] Could not find JSON in model output")
-            print(f"[LLM] Raw output: {generated_text}")
-            return None
-            
-    except Exception as e:
-        print(f"[LLM ERROR] During generation: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
-
-
-# ==============================
-# MACRO THRESHOLDS CONFIG
-# ==============================
 MEAL_THRESHOLDS = {
     "breakfast": {"Calories": 20, "Protein": 19, "Carbs": 26, "Fats": 21},
     "lunch": {"Calories": 31, "Protein": 34, "Carbs": 34, "Fats": 34},
     "dinner": {"Calories": 29, "Protein": 30, "Carbs": 29, "Fats": 29},
     "snack": {"Calories": 9, "Protein": 9, "Carbs": 6, "Fats": 9},
+    "snacks": {"Calories": 9, "Protein": 9, "Carbs": 6, "Fats": 9},
     "supper": {"Calories": 11, "Protein": 8, "Carbs": 6, "Fats": 7},
 }
 
 # ==============================
-# HELPER: COMPARE WITH THRESHOLDS
+# UTILITIES
 # ==============================
+def check_server_health():
+    """Check if the remote LLM server is available"""
+    try:
+        response = requests.get(f"{NGROK_URL}/health", timeout=5)
+        if response.status_code == 200:
+            print("[LLM] SUCCESS: Connected to remote server")
+            return True
+        print(f"[LLM] ERROR: Server returned status {response.status_code}")
+        return False
+    except requests.exceptions.RequestException as e:
+        print(f"[LLM] ERROR: Cannot connect to server: {e}")
+        return False
+
+def compress_and_encode_image(image_path, max_size=(512, 512), quality=85):
+    """Compress and encode an image to base64"""
+    img = Image.open(image_path).convert("RGB")
+    img.thumbnail(max_size)
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=quality)
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode("utf-8")
+
+def load_model():
+    """Compatibility function - checks remote server"""
+    print("[LLM] Checking remote server connection...")
+    if check_server_health():
+        print("[LLM] Remote model ready")
+        return None, None
+    print("[LLM] WARNING: Cannot connect to remote server!")
+    print("[LLM] Make sure Google Colab is running and NGROK_URL is correct")
+    return None, None
+
+def _make_request(endpoint, payload, timeout=REQUEST_TIMEOUT, operation="Request"):
+    """Unified request handler for all API calls"""
+    try:
+        print(f"[LLM] Sending {operation.lower()} to remote server...")
+        response = requests.post(f"{NGROK_URL}/{endpoint}", json=payload, timeout=timeout)
+        
+        if response.status_code == 200:
+            result = response.json()
+            if "error" in result:
+                print(f"[LLM ERROR] Server returned error: {result['error']}")
+                return None
+            return result
+        
+        print(f"[LLM ERROR] Server returned status {response.status_code}")
+        print(f"[LLM ERROR] Response: {response.text}")
+        return None
+        
+    except requests.exceptions.Timeout:
+        print(f"[LLM ERROR] {operation} timed out. Server may be overloaded.")
+    except requests.exceptions.RequestException as e:
+        print(f"[LLM ERROR] {operation} failed: {e}")
+    except Exception as e:
+        print(f"[LLM ERROR] Unexpected error: {e}")
+        traceback.print_exc()
+    return None
+
+# ==============================
+# CORE FUNCTIONS
+# ==============================
+def estimate_nutrition(image_path, user_prompt=None, role_prompt=None):
+    """Estimate nutrition from an image by sending it to remote server"""
+    if not os.path.exists(image_path):
+        print(f"[LLM ERROR] Image not found: {image_path}")
+        return None
+    
+    print(f"[LLM] Loading and encoding image: {image_path}")
+    try:
+        image_base64 = compress_and_encode_image(image_path)
+    except Exception as e:
+        print(f"[LLM ERROR] Failed to compress/encode image: {e}")
+        return None
+    
+    print("[LLM] This may take 10-30 seconds...")
+    payload = {"image_base64": image_base64, "user_prompt": user_prompt, "role_prompt": role_prompt}
+    
+    nutrition_data = _make_request("estimate_nutrition", payload, operation="Nutrition estimation")
+    if nutrition_data:
+        print(f"[LLM] Nutrition estimate: {json.dumps(nutrition_data, indent=2)}")
+    return nutrition_data
+
 def compare_macros(meal_type, meal_macros, total_daily_macros):
-    """
-    Compare logged meal macros with allowed percentage thresholds.
-    Returns dict of exceeded nutrients and their exceeded amounts.
-    """
+    """Compare logged meal macros with allowed percentage thresholds"""
     exceeded = {}
     meal_type = meal_type.lower()
 
@@ -168,153 +117,46 @@ def compare_macros(meal_type, meal_macros, total_daily_macros):
         return exceeded
 
     for nutrient, threshold_pct in MEAL_THRESHOLDS[meal_type].items():
-        # Expected max value for this nutrient based on total daily allowance
         expected_max = (threshold_pct / 100) * total_daily_macros.get(nutrient, 0)
         actual = meal_macros.get(nutrient, 0)
-
         if actual > expected_max:
-            exceeded_amount = round(actual - expected_max, 2)
-            exceeded[nutrient] = exceeded_amount
+            exceeded[nutrient] = round(actual - expected_max, 2)
 
     return exceeded
 
-# ==============================
-# FOLLOW-UP LLM TIP PROMPT
-# ==============================
 def get_reduction_tips(exceeded_dict, meal_type, energy_level=None, hunger_level=None):
-    """
-    Ask the LLM for advice on reducing intake of exceeded macros.
-    Includes user's energy and hunger levels if provided.
-    """
+    """Ask the remote LLM for advice on reducing intake of exceeded macros"""
     if not exceeded_dict:
         print(f"[LLM] No macro thresholds exceeded for {meal_type}.")
         return None
     
-    exceeded_str = ", ".join(
-        [f"{nutrient} by {value:.1f}g" if nutrient != "Calories" else f"{nutrient} by {value:.0f} kcal"
-         for nutrient, value in exceeded_dict.items()]
-    )
+    payload = {
+        "exceeded_dict": exceeded_dict,
+        "meal_type": meal_type,
+        "energy_level": energy_level,
+        "hunger_level": hunger_level
+    }
     
-    # Build the user prompt with survey data if available
-    user_prompt = (
-        f"My {meal_type} exceeded the expected macronutrient targets: {exceeded_str}. "
-    )
-    
-    if energy_level is not None and hunger_level is not None:
-        user_prompt += (
-            f"After this meal, my energy level is {energy_level}/5 and my hunger level is {hunger_level}/5. "
-        )
-    
-    user_prompt += (
-        f"Give concise, practical diet recommendations for the next meal to balance my macro intake"
-    )
-    
-    if energy_level is not None and hunger_level is not None:
-        user_prompt += ", considering my current energy and hunger state"
-    
-    user_prompt += "."
-    
-    role_prompt = """
-    You are a health and nutrition assistant.
-    When a meal exceeds recommended macronutrient percentages, give short actionable advice on how to reduce intake of those nutrients in the next meal.
-    If the user provides their energy and hunger levels, incorporate that into your advice (e.g., if energy is low, suggest energy-boosting foods; if hunger is high, suggest satiating options).
-    Keep responses under 5 sentences.
-    """
-    
-    # Load model (reuse singleton)
-    model, processor = load_model()
-    messages = [
-        {"role": "system", "content": role_prompt.strip()},
-        {"role": "user", "content": user_prompt.strip()}
-    ]
-    
-    print("[LLM] Generating reduction tips...")
-    print(f"[LLM] User prompt: {user_prompt}")
-    
-    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    inputs = processor(text=[text], return_tensors="pt", padding=True).to(model.device)
-    outputs = model.generate(
-        **inputs,
-        do_sample=True,
-        max_new_tokens=120,
-        temperature=0.8,
-        top_p=0.9
-    )
-    advice = processor.batch_decode(outputs, skip_special_tokens=True)[0]
-    
-    # Keep only the assistant's final message (strip role/system text if present)
-    if "assistant" in advice:
-        advice = advice.split("assistant")[-1].strip()
-    if "user" in advice:
-        advice = advice.split("user")[-1].strip()
-    
-    # Clean up any leftover formatting or extra newlines
-    advice = advice.strip().replace("\n", " ")
-    print(f"[LLM] Advice: {advice}")
-    return advice
+    result = _make_request("reduction_tips", payload, timeout=CHAT_TIMEOUT, operation="Reduction tips")
+    if result:
+        advice = result.get("advice")
+        print(f"[LLM] Advice: {advice}")
+        return advice
+    return None
 
-# ==============================
-# FOLLOW UP LLM WELLNES TIPS
-# ==============================
 def generate_wellness_tips(meal_type, energy_level, hunger_level):
-    """
-    Generate tips based on energy and hunger levels when macros are within range.
-    """
-    user_prompt = (
-        f"After my {meal_type}, my energy level is {energy_level}/5 and my hunger level is {hunger_level}/5. "
-    )
+    """Generate tips based on energy and hunger levels when macros are within range"""
+    payload = {"meal_type": meal_type, "energy_level": energy_level, "hunger_level": hunger_level}
     
-    if energy_level <= 2:
-        user_prompt += "I'm feeling low on energy. "
-    if hunger_level >= 4:
-        user_prompt += "I'm still quite hungry. "
-    
-    user_prompt += "Give me brief advice on what to eat or do next to feel better."
-    
-    role_prompt = """
-    You are a health and nutrition assistant.
-    Provide brief, practical advice based on the user's energy and hunger levels.
-    Suggest foods or actions that can help improve their state.
-    Keep responses under 4 sentences.
-    """
-    
-    model, processor = load_model()
-    messages = [
-        {"role": "system", "content": role_prompt.strip()},
-        {"role": "user", "content": user_prompt.strip()}
-    ]
-    
-    print("[LLM] Generating wellness tips...")
-    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    inputs = processor(text=[text], return_tensors="pt", padding=True).to(model.device)
-    outputs = model.generate(
-        **inputs,
-        do_sample=True,
-        max_new_tokens=100,
-        temperature=0.8,
-        top_p=0.9
-    )
-    advice = processor.batch_decode(outputs, skip_special_tokens=True)[0]
-    
-    if "assistant" in advice:
-        advice = advice.split("assistant")[-1].strip()
-    if "user" in advice:
-        advice = advice.split("user")[-1].strip()
-    
-    advice = advice.strip().replace("\n", " ")
-    print(f"[LLM] Wellness advice: {advice}")
-    return advice
+    result = _make_request("wellness_tips", payload, timeout=CHAT_TIMEOUT, operation="Wellness tips")
+    if result:
+        advice = result.get("advice")
+        print(f"[LLM] Wellness advice: {advice}")
+        return advice
+    return None
 
-
-# ==============================
-# MAIN ENTRY FOR MEAL LOGGING
-# ==============================
 def handle_logged_meal(meal_type, meal_macros, total_daily_macros, energy_level=None, hunger_level=None):
-    """
-    Full pipeline after a meal is logged.
-    Compares macros and optionally asks the LLM for dietary advice.
-    Includes user's energy and hunger levels if provided.
-    """
+    """Full pipeline after a meal is logged"""
     print(f"[MEAL] Checking macros for {meal_type}...")
     
     if energy_level is not None and hunger_level is not None:
@@ -324,85 +166,50 @@ def handle_logged_meal(meal_type, meal_macros, total_daily_macros, energy_level=
     
     if exceeded:
         print(f"[MEAL] Exceeded macros detected: {exceeded}")
-        advice = get_reduction_tips(exceeded, meal_type, energy_level, hunger_level)
-        return advice
-    else:
-        print(f"[MEAL] {meal_type.capitalize()} is within recommended macro limits.")
-        
-        # Even if macros are fine, provide advice based on energy/hunger if available
-        if energy_level is not None and hunger_level is not None:
-            if energy_level <= 2 or hunger_level >= 4:
-                # Generate tips for low energy or high hunger
-                advice = generate_wellness_tips(meal_type, energy_level, hunger_level)
-                return advice
-        
-        return None
-
+        return get_reduction_tips(exceeded, meal_type, energy_level, hunger_level)
+    
+    print(f"[MEAL] {meal_type.capitalize()} is within recommended macro limits.")
+    
+    # Provide wellness advice for low energy or high hunger even if macros are fine
+    if energy_level is not None and hunger_level is not None:
+        if energy_level <= 2 or hunger_level >= 4:
+            return generate_wellness_tips(meal_type, energy_level, hunger_level)
+    
+    return None
 
 def get_chat_response(user_message, context=None):
-    """
-    Generate a chat response using the LLM.
-    
-    Args:
-        user_message: The user's question/message
-        context: Optional dict with user's daily_macros and other context
-    
-    Returns:
-        String response from the LLM
-    """
-    # Build system prompt with context
-    system_prompt = """
-    You are a helpful nutrition and health assistant.
-    Answer questions about nutrition, diet, fitness, and healthy eating.
-    Keep responses concise (under 6 sentences) and practical.
-    Be friendly and supportive.
-    """
-    
-    # Add context if available
-    if context and 'daily_macros' in context:
-        macros = context['daily_macros']
-        system_prompt += f"""
-        
-        The user's current daily intake is:
-        - Calories: {macros.get('Calories', 0)} kcal
-        - Protein: {macros.get('Protein', 0)}g
-        - Carbs: {macros.get('Carbs', 0)}g
-        - Fats: {macros.get('Fats', 0)}g
-        
-        Consider this when giving advice if relevant to their question.
-        """
-    
-    # Load model
-    model, processor = load_model()
-    
-    messages = [
-        {"role": "system", "content": system_prompt.strip()},
-        {"role": "user", "content": user_message.strip()}
-    ]
-    
+    """Generate a chat response using the remote LLM"""
     print(f"[CHAT] User asked: {user_message}")
     
-    # Generate response
-    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    inputs = processor(text=[text], return_tensors="pt", padding=True).to(model.device)
+    daily_macros = context.get('daily_macros') if context else None
+    payload = {"message": user_message, "daily_macros": daily_macros}
     
-    outputs = model.generate(
-        **inputs,
-        do_sample=True,
-        max_new_tokens=150,  # Slightly longer for chat responses
-        temperature=0.7,
-        top_p=0.9
-    )
+    result = _make_request("chat", payload, timeout=CHAT_TIMEOUT, operation="Chat")
+    if result:
+        chat_response = result.get("response", "Sorry, I couldn't generate a response.")
+        print(f"[CHAT] Response: {chat_response}")
+        return chat_response
     
-    response = processor.batch_decode(outputs, skip_special_tokens=True)[0]
+    return "Sorry, I couldn't process your request. Please try again."
+
+# ==============================
+# STARTUP CHECK
+# ==============================
+if __name__ == "__main__":
+    print("\n" + "="*60)
+    print("Testing connection to remote LLM server...")
+    print("="*60)
     
-    # Clean up response
-    if "assistant" in response:
-        response = response.split("assistant")[-1].strip()
-    if "user" in response:
-        response = response.split("user")[-1].strip()
+    if check_server_health():
+        print("\nSUCCESS! Remote server is accessible.")
+        print(f"Server URL: {NGROK_URL}")
+    else:
+        print("\nFAILED! Cannot connect to remote server.")
+        print("\nTroubleshooting:")
+        print("1. Make sure Google Colab notebook is running")
+        print("2. Check that cloudflare tunnel is active in Colab")
+        print("3. Copy the correct cloudflare URL from Colab output")
+        print(f"4. Update NGROK_URL in this file: {__file__}")
+        print(f"   Current URL: {NGROK_URL}")
     
-    response = response.strip()
-    print(f"[CHAT] Response: {response}")
-    
-    return response
+    print("="*60 + "\n")
