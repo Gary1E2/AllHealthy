@@ -1,12 +1,56 @@
-flask==3.1.2
-pyngrok==7.4.1
-transformers==4.46.2
-torch==2.5.1
-torchvision==0.20.1
-pillow==11.0.0
-accelerate==1.1.1
-blinker==1.9.0
-psutil==6.0.0
+# ====================
+# INSTALLATION ORDER FOR QWEN3-VL-8B-INSTRUCT
+# ====================
+# Step 1: Install PyTorch with CUDA 12.1 (Use PyTorch 2.5.1)
+# pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+
+# Step 2: Install Transformers from GitHub (REQUIRED for Qwen3-VL)
+# pip install git+https://github.com/huggingface/transformers
+
+# Step 3: Install remaining packages
+# pip install -r requirements.txt
+
+# ====================
+# Core Web Server Dependencies
+# ====================
+flask==3.1.0
+werkzeug==3.1
+pyngrok==7.2.0
+blinker==1.9
+psutil==6.1.0
 requests==2.32.3
-bitsandbytes==0.43.1
-git+https://github.com/huggingface/transformers
+certifi>=2024.2.2
+
+# ====================
+# Image Processing
+# ====================
+pillow==10.4.0
+
+# ====================
+# Hugging Face Ecosystem
+# ====================
+# NOTE: transformers must be installed from GitHub first (see Step 2 above)
+# git+https://github.com/huggingface/transformers
+# git+https://github.com/huggingface/accelerate
+
+huggingface-hub>=1.0.0
+safetensors==0.4.5
+tokenizers>=0.22.0,<=0.23.0
+
+# ====================
+# Qwen3-VL Specific Requirements
+# ====================
+qwen-vl-utils==0.0.14  # Required for Qwen3-VL processing
+
+# ====================
+# Quantization Support (Windows now officially supported!)
+# ====================
+bitsandbytes>=0.45.0  # Official package now supports Windows
+
+# ====================
+# Core ML Dependencies
+# ====================
+numpy<2.0.0  # Critical: Transformers not compatible with numpy 2.x yet
+scipy>=1.10.0
+sentencepiece>=0.2.0
+protobuf>=3.20.0
