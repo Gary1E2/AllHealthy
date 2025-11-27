@@ -14,13 +14,17 @@ REQUEST_TIMEOUT = 500
 CHAT_TIMEOUT = 120
 
 MEAL_THRESHOLDS = {
-    "breakfast": {"Calories": 20, "Protein": 19, "Carbs": 26, "Fats": 21},
-    "lunch": {"Calories": 31, "Protein": 34, "Carbs": 34, "Fats": 34},
-    "dinner": {"Calories": 29, "Protein": 30, "Carbs": 29, "Fats": 29},
-    "snack": {"Calories": 9, "Protein": 9, "Carbs": 6, "Fats": 9},
-    "snacks": {"Calories": 9, "Protein": 9, "Carbs": 6, "Fats": 9},
-    "supper": {"Calories": 11, "Protein": 8, "Carbs": 6, "Fats": 7},
+    "breakfast": {"Calories": 20, "Proteins": 40, "Carbs": 40, "Fats": 40},
+    "lunch": {"Calories": 31, "Proteins": 40, "Carbs": 40, "Fats": 40},
+    "dinner": {"Calories": 29, "Proteins": 40, "Carbs": 40, "Fats": 40},
+    "snack": {"Calories": 9, "Proteins": 40, "Carbs": 40, "Fats": 40},
+    "snacks": {"Calories": 9, "Proteins": 40, "Carbs": 40, "Fats": 40},
+    "supper": {"Calories": 11, "Proteins": 40, "Carbs": 40, "Fats": 40},
 }
+
+# Thresholds for hunger and energy levels
+HUNGER_THRESHOLD = 4  # Hunger level above this triggers tips
+ENERGY_THRESHOLD = 2  # Energy level below this triggers tips
 
 # ==============================
 # UTILITIES
@@ -54,7 +58,7 @@ def load_model():
         print("[LLM] Remote model ready")
         return None, None
     print("[LLM] WARNING: Cannot connect to remote server!")
-    print("[LLM] Make sure Google Colab is running and NGROK_URL is correct")
+    print("[LLM] Make sure remote model program is running and NGROK_URL is correct")
     return None, None
 
 def _make_request(endpoint, payload, timeout=REQUEST_TIMEOUT, operation="Request"):
@@ -107,75 +111,142 @@ def estimate_nutrition(image_path, user_prompt=None, role_prompt=None):
         print(f"[LLM] Nutrition estimate: {json.dumps(nutrition_data, indent=2)}")
     return nutrition_data
 
-def compare_macros(meal_type, meal_macros, total_daily_macros):
-    """Compare logged meal macros with allowed percentage thresholds"""
-    exceeded = {}
-    meal_type = meal_type.lower()
-
-    if meal_type not in MEAL_THRESHOLDS:
-        print(f"[WARN] Unknown meal type '{meal_type}'. Skipping threshold check.")
-        return exceeded
-
-    for nutrient, threshold_pct in MEAL_THRESHOLDS[meal_type].items():
-        expected_max = (threshold_pct / 100) * total_daily_macros.get(nutrient, 0)
-        actual = meal_macros.get(nutrient, 0)
-        if actual > expected_max:
-            exceeded[nutrient] = round(actual - expected_max, 2)
-
-    return exceeded
-
-def get_reduction_tips(exceeded_dict, meal_type, energy_level=None, hunger_level=None):
-    """Ask the remote LLM for advice on reducing intake of exceeded macros"""
-    if not exceeded_dict:
-        print(f"[LLM] No macro thresholds exceeded for {meal_type}.")
+def describe_food(image_path):
+    """Generate a description of the food in the image"""
+    if not os.path.exists(image_path):
+        print(f"[LLM ERROR] Image not found: {image_path}")
         return None
     
-    payload = {
-        "exceeded_dict": exceeded_dict,
-        "meal_type": meal_type,
+    print(f"[LLM] Generating food description...")
+    try:
+        image_base64 = compress_and_encode_image(image_path)
+    except Exception as e:
+        print(f"[LLM ERROR] Failed to compress/encode image: {e}")
+        return None
+    
+    payload = {"image_base64": image_base64}
+    result = _make_request("describe_food", payload, timeout=30, operation="Food description")
+    
+    if result:
+        description = result.get("description", "")
+        print(f"[LLM] Description: {description}")
+        return description
+    return None
+
+def analyze_meal_context(meal_type, meal_macros, daily_goal_macros, energy_level=None, hunger_level=None):
+    """
+    Analyze all aspects of a logged meal: macros, hunger, and energy levels.
+    Returns a context dict with all exceeded thresholds.
+    
+    Args:
+        meal_type: Type of meal (breakfast, lunch, etc.)
+        meal_macros: Macros for this specific meal
+        daily_goal_macros: The user's DAILY GOAL macros (not consumed)
+        energy_level: Energy level after meal (1-5)
+        hunger_level: Hunger level after meal (1-5)
+    """
+    # Standardize meal_macros keys to match MEAL_THRESHOLDS format
+    # Convert "Protein" -> "Proteins" if needed
+    standardized_meal_macros = {}
+    for key, value in meal_macros.items():
+        if key == "Protein":
+            standardized_meal_macros["Proteins"] = value
+        else:
+            standardized_meal_macros[key] = value
+    
+    context = {
+        "meal_type": meal_type.lower(),
+        "exceeded_macros": {},
+        "high_hunger": False,
+        "low_energy": False,
         "energy_level": energy_level,
         "hunger_level": hunger_level
     }
     
-    result = _make_request("reduction_tips", payload, timeout=CHAT_TIMEOUT, operation="Reduction tips")
+    # Check macro thresholds
+    meal_type_lower = meal_type.lower()
+    if meal_type_lower in MEAL_THRESHOLDS:
+        for nutrient, threshold_pct in MEAL_THRESHOLDS[meal_type_lower].items():
+            # Calculate the maximum allowed for this meal type based on DAILY GOAL
+            allowed_max = (threshold_pct / 100) * daily_goal_macros.get(nutrient, 0)
+            # Get actual amount consumed in this meal (use standardized keys)
+            actual = standardized_meal_macros.get(nutrient, 0)
+            # Check if this meal exceeded its allowed percentage
+            if actual > allowed_max:
+                context["exceeded_macros"][nutrient] = round(actual - allowed_max, 2)
+    
+    # Check hunger and energy thresholds
+    if hunger_level is not None and hunger_level > HUNGER_THRESHOLD:
+        context["high_hunger"] = True
+    
+    if energy_level is not None and energy_level < ENERGY_THRESHOLD:
+        context["low_energy"] = True
+    
+    return context
+
+def get_dynamic_tips(meal_context):
+    """
+    Request dynamic tips from remote server based on what thresholds were exceeded.
+    Only generates tips if at least one threshold is exceeded.
+    """
+    # Check if any threshold was exceeded
+    has_exceeded_macros = bool(meal_context.get("exceeded_macros"))
+    has_high_hunger = meal_context.get("high_hunger", False)
+    has_low_energy = meal_context.get("low_energy", False)
+    
+    if not (has_exceeded_macros or has_high_hunger or has_low_energy):
+        print(f"[MEAL] {meal_context['meal_type'].capitalize()} is within all recommended thresholds.")
+        return None
+    
+    # Build description of what was exceeded
+    exceeded_items = []
+    if has_exceeded_macros:
+        macro_str = ", ".join([
+            f"{n} by {v:.1f}g" if n != "Calories" else f"{n} by {v:.0f} kcal"
+            for n, v in meal_context["exceeded_macros"].items()
+        ])
+        exceeded_items.append(f"macros ({macro_str})")
+    if has_high_hunger:
+        exceeded_items.append(f"hunger level ({meal_context['hunger_level']}/5)")
+    if has_low_energy:
+        exceeded_items.append(f"energy level ({meal_context['energy_level']}/5)")
+    
+    print(f"[MEAL] Thresholds exceeded: {', '.join(exceeded_items)}")
+    
+    # Send to remote server
+    payload = {"meal_context": meal_context}
+    result = _make_request("dynamic_tips", payload, timeout=CHAT_TIMEOUT, operation="Dynamic tips")
+    
     if result:
         advice = result.get("advice")
         print(f"[LLM] Advice: {advice}")
         return advice
     return None
 
-def generate_wellness_tips(meal_type, energy_level, hunger_level):
-    """Generate tips based on energy and hunger levels when macros are within range"""
-    payload = {"meal_type": meal_type, "energy_level": energy_level, "hunger_level": hunger_level}
+def handle_logged_meal(meal_type, meal_macros, daily_goal_macros, energy_level=None, hunger_level=None):
+    """
+    Full pipeline after a meal is logged.
+    Analyzes all aspects and generates dynamic tips only if needed.
     
-    result = _make_request("wellness_tips", payload, timeout=CHAT_TIMEOUT, operation="Wellness tips")
-    if result:
-        advice = result.get("advice")
-        print(f"[LLM] Wellness advice: {advice}")
-        return advice
-    return None
-
-def handle_logged_meal(meal_type, meal_macros, total_daily_macros, energy_level=None, hunger_level=None):
-    """Full pipeline after a meal is logged"""
-    print(f"[MEAL] Checking macros for {meal_type}...")
-    
-    if energy_level is not None and hunger_level is not None:
+    Args:
+        meal_type: Type of meal (breakfast, lunch, etc.)
+        meal_macros: Macros for this specific meal
+        daily_goal_macros: The user's DAILY GOAL macros (not consumed)
+        energy_level: Energy level after meal (1-5)
+        hunger_level: Hunger level after meal (1-5)
+    """
+    print(f"[MEAL] Analyzing {meal_type}...")
+    if energy_level is not None or hunger_level is not None:
         print(f"[MEAL] User state - Energy: {energy_level}/5, Hunger: {hunger_level}/5")
     
-    exceeded = compare_macros(meal_type, meal_macros, total_daily_macros)
+    # Analyze all aspects of the meal
+    meal_context = analyze_meal_context(
+        meal_type, meal_macros, daily_goal_macros, 
+        energy_level, hunger_level
+    )
     
-    if exceeded:
-        print(f"[MEAL] Exceeded macros detected: {exceeded}")
-        return get_reduction_tips(exceeded, meal_type, energy_level, hunger_level)
-    
-    print(f"[MEAL] {meal_type.capitalize()} is within recommended macro limits.")
-    
-    # Provide wellness advice for low energy or high hunger even if macros are fine
-    if energy_level is not None and hunger_level is not None:
-        if energy_level <= 2 or hunger_level >= 4:
-            return generate_wellness_tips(meal_type, energy_level, hunger_level)
-    
-    return None
+    # Get dynamic tips if any threshold exceeded
+    return get_dynamic_tips(meal_context)
 
 def get_chat_response(user_message, context=None):
     """Generate a chat response using the remote LLM"""

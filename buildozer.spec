@@ -14,16 +14,16 @@ source.dir = .
 source.main = app.py
 
 # (list) Source files to include (let empty to include all the files)
-source.include_exts = py,json,kv
+source.include_exts = py,png,jpg,jpeg,ttf,kv,atlas
 
 # (list) List of inclusions using pattern matching
-#source.include_patterns = app.py,chatbot.py,upload.py
+source.include_patterns = assets/*,fonts/*,main.py,chatbot.py,upload.py,*.kv
 
 # (list) Source files to exclude (let empty to not exclude anything)
 #source.exclude_exts = spec,sample_data/*,build/*,bin/
 
 # (list) List of directory to exclude (let empty to not exclude anything)
-#source.exclude_dirs = tests, bin, venv
+source.exclude_dirs = bin,.vscode,.buildozer,__pycache__,.git,.github,venv,env,serverchatbot,images
 
 # (list) List of exclusions using pattern matching
 # Do not prefix with './'
@@ -38,7 +38,7 @@ version = 0.1
 
 # (list) Application requirements
 # comma separated e.g. requirements = sqlite3,kivy
-requirements = python3,kivy,requests,pillow,requests
+requirements = python3,kivy,plyer,requests,pillow
 
 # (str) Custom source folders for requirements
 # Sets custom source for any requirements with recipes
@@ -48,7 +48,7 @@ requirements = python3,kivy,requests,pillow,requests
 #presplash.filename = %(source.dir)s/data/presplash.png
 
 # (str) Icon of the application
-#icon.filename = %(source.dir)s/images/chickenrice.jpg
+icon.filename = assets/AllHealthyLogo.png
 
 # (list) Supported orientations
 # Valid options are: landscape, portrait, portrait-reverse or landscape-reverse
@@ -75,7 +75,7 @@ osx.kivy_version = 1.9.1
 #
 
 # (bool) Indicate if the application should be fullscreen or not
-fullscreen = 1
+fullscreen = 0
 
 # (string) Presplash background color (for android toolchain)
 # Supported formats are: #RRGGBB #AARRGGBB or one of the following names:
@@ -96,7 +96,7 @@ fullscreen = 1
 
 # (list) Permissions
 # (See https://python-for-android.readthedocs.io/en/latest/buildoptions/#build-options-1 for all the supported syntaxes and properties)
-android.permissions = INTERNET,NETWORKACCESS
+android.permissions = INTERNET,READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE,CAMERA
 
 # (list) features (adds uses-feature -tags to manifest)
 #android.features = android.hardware.usb.host
@@ -202,7 +202,7 @@ android.permissions = INTERNET,NETWORKACCESS
 #android.add_resources =
 
 # (list) Gradle dependencies to add
-#android.gradle_dependencies =
+android.gradle_dependencies = androidx.core:core:1.6.0
 
 # (bool) Enable AndroidX support. Enable when 'android.gradle_dependencies'
 # contains an 'androidx' package, or any package from Kotlin source.
@@ -238,6 +238,9 @@ android.permissions = INTERNET,NETWORKACCESS
 
 # (str) XML file to include as an intent filters in <activity> tag
 #android.manifest.intent_filters =
+
+# Add this for proper keyboard handling:
+android.manifest.activity = android:windowSoftInputMode="adjustResize"
 
 # (list) Copy these files to src/main/res/xml/ (used for example with intent-filters)
 #android.res_xml = PATH_TO_FILE,

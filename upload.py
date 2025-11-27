@@ -32,16 +32,19 @@ def _num_field(value):
 
 def _make_meal_fields(nutrition_data):
     """Convert nutrition dict to Firestore field map"""
-    return {
-        "mapValue": {
-            "fields": {
+    fields = {
                 "calories": _num_field(nutrition_data.get("Calories", 0)),
                 "proteins": _num_field(nutrition_data.get("Protein", 0)),
                 "carbs": _num_field(nutrition_data.get("Carbs", 0)),
                 "fats": _num_field(nutrition_data.get("Fats", 0)),
             }
-        }
-    }
+    # Optional: energy/hunger ratings (1–5)
+    if "energy" in nutrition_data:
+        fields["energy"] = _num_field(nutrition_data["energy"])
+    if "hunger" in nutrition_data:
+        fields["hunger"] = _num_field(nutrition_data["hunger"])
+
+    return {"mapValue": {"fields": fields}}
 
 
 def _get_doc_url(user_id, date_str):
