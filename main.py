@@ -2,7 +2,7 @@
 Diet Tracker Application - Refactored with KV Language
 
 Architecture:
-- diettracker.kv: All UI styling, layouts, and widget definitions
+- style.kv: All UI styling, layouts, and widget definitions
 - main.py: Business logic, data handling, and event processing
 
 Key Components:
@@ -16,7 +16,7 @@ Key Components:
 
 Important Notes:
 - All self.ids access must be scheduled after __init__ or use on_kv_post
-- KV file is auto-loaded by Builder.load_file('diettracker.kv')
+- KV file is auto-loaded by Builder.load_file('style.kv')
 - Widget styling and layout changes should be made in .kv file
 """
 
@@ -49,8 +49,8 @@ import io
 import math, threading, time, traceback, datetime, os, shutil
 from functools import partial
 
-from chatbot import load_model, estimate_nutrition, handle_logged_meal, get_chat_response, describe_food
-from upload import upload_meal, init_firebase, get_user_doc, get_meal_doc
+from chatbot import load_model, estimate_nutrition, handle_logged_meal, get_chat_response, describe_food, get_recipe_from_image, get_recipe_from_text, get_recipe_from_text_and_image
+from upload import upload_meal, update_macro_goals, init_firebase, get_user_doc, get_meal_doc
 
 # Mobile Configuration
 if platform == 'android':
@@ -74,9 +74,11 @@ COLORS = {
     'accent3': get_color_from_hex("#7D4E57")
 }
 Window.clearcolor = COLORS['main']
-USER_ID = "user"
-PROJECT_ID = "diet-app-sg"
-FIREBASE_URL = f"https://firestore.googleapis.com/v1/projects/{PROJECT_ID}/databases/(default)/documents"
+
+# insert your user id, project id and firebase url here
+USER_ID = "#USER_ID HERE#"
+PROJECT_ID = "#PROJECT_ID HERE#"
+FIREBASE_URL = f"#FIRESTORE_URL HERE#"
 # Window.size = (360, 640)  # Comment out when compiling to mobile
 
 # Load KV file
@@ -221,20 +223,27 @@ class LineGraph(FloatLayout):
     # Make title a Kivy Property so KV can bind to it
     title = StringProperty("")
     
-    def __init__(self, title, data_points, colors, labels, y_label="Value", **kwargs):
+    def __init__(self, title, data_points, colors, labels, y_label="Value", dates=None, **kwargs):
         self.title = title  # Set before super().__init__
         super().__init__(**kwargs)
         self.data_points = data_points
         self.colors = colors
         self.labels = labels
         self.y_label = y_label
+        self.dates = dates  # List of dates for x-axis labels
     
     def draw_graph(self):
         self.canvas.after.clear()
+        
+        # Clear any existing value labels and x-axis labels
+        for child in self.children[:]:
+            if isinstance(child, Label) and not isinstance(child.parent, BoxLayout):
+                self.remove_widget(child)
+        
         if not self.data_points or not any(self.data_points):
             return
         
-        padding = {'left': dp(45), 'right': dp(20), 'top': dp(60), 'bottom': dp(40)}
+        padding = {'left': dp(45), 'right': dp(20), 'top': dp(60), 'bottom': dp(50)}
         graph_w = self.width - padding['left'] - padding['right']
         graph_h = self.height - padding['top'] - padding['bottom']
         
@@ -276,6 +285,37 @@ class LineGraph(FloatLayout):
                     Line(points=points, width=2.5)
                     for i in range(0, len(points), 2):
                         Ellipse(pos=(points[i] - dp(4), points[i+1] - dp(4)), size=(dp(8), dp(8)))
+                        
+                        # Add value labels above data points
+                        value_idx = i // 2
+                        value = series[value_idx]
+                        value_label = Label(
+                            text=str(int(value)),
+                            font_size=dp(10),
+                            color=COLORS['main'],  # Changed to COLORS['main']
+                            bold=True,
+                            size_hint=(None, None),
+                            size=(dp(30), dp(15)),
+                            pos=(points[i] - dp(15), points[i+1] + dp(8))
+                        )
+                        self.add_widget(value_label)
+        
+        # Add X-axis date labels (OUTSIDE the canvas context)
+        if self.dates and len(self.dates) == 7:
+            for day_idx in range(7):
+                x_pos = self.x + padding['left'] + (x_step * day_idx)
+                date_label = Label(
+                    text=self.dates[day_idx],
+                    font_size=dp(10),
+                    color=COLORS['main'],
+                    size_hint=(None, None),
+                    size=(dp(40), dp(20)),
+                    pos=(x_pos - dp(20), self.y + dp(5)),  # Position at bottom
+                    halign='center',
+                    valign='middle'
+                )
+                date_label.bind(size=date_label.setter('text_size'))
+                self.add_widget(date_label)
         
         # Legend
         legend_y = self.y + self.height - dp(40)
@@ -392,6 +432,10 @@ class AnalyticsPopup(Popup):
     
     def _create_graphs(self, dt):
         """Create and add graphs after popup is ready"""
+        # Generate date labels for the past 7 days
+        today = datetime.date.today()
+        dates = [(today - datetime.timedelta(days=6-i)).strftime("%d/%m") for i in range(7)]
+        
         # Data
         if self.weekly_data:
             cal_data = self.weekly_data.get('calories', [0]*7)
@@ -411,22 +455,77 @@ class AnalyticsPopup(Popup):
         # Graphs
         graphs = self.ids.graphs_container
         
-        calories_graph = LineGraph("7-Day Calorie Intake", [cal_data], 
-                                        ["#9B59B6"], ["Calories"], "Calories (kcal)")
-        macros_graph = LineGraph("7-Day Macros Trend", 
-                                      [prot_data, carb_data, fat_data],
-                                      ["#FF6B6B", "#4ECDC4", "#FFE66D"],
-                                      ["Protein", "Carbs", "Fats"], "Grams (g)")
-        energy_graph = LineGraph("7-Day Energy Levels", [energy_data], 
-                                      ["#F39C12"], ["Energy"], "Level (1-5)")
-        hunger_graph = LineGraph("7-Day Hunger Levels", [hunger_data], 
-                                      ["#E74C3C"], ["Hunger"], "Level (1-5)")
-
-        for graph in [calories_graph, macros_graph, energy_graph, hunger_graph]:
+        # Calorie graph
+        calories_graph = LineGraph(
+            "7-Day Calorie Intake", 
+            [cal_data], 
+            ["#9B59B6"], 
+            ["Calories"], 
+            "Calories (kcal)",
+            dates=dates
+        )
+        
+        # SEPARATE macro graphs
+        protein_graph = LineGraph(
+            "7-Day Protein Intake",
+            [prot_data],
+            ["#FF6B6B"],
+            ["Protein"],
+            "Grams (g)",
+            dates=dates
+        )
+        
+        carbs_graph = LineGraph(
+            "7-Day Carbs Intake",
+            [carb_data],
+            ["#4ECDC4"],
+            ["Carbs"],
+            "Grams (g)",
+            dates=dates
+        )
+        
+        fats_graph = LineGraph(
+            "7-Day Fats Intake",
+            [fat_data],
+            ["#FFE66D"],
+            ["Fats"],
+            "Grams (g)",
+            dates=dates
+        )
+        
+        # Energy and hunger graphs
+        energy_graph = LineGraph(
+            "7-Day Energy Levels", 
+            [energy_data], 
+            ["#F39C12"], 
+            ["Energy"], 
+            "Level (1-5)",
+            dates=dates
+        )
+        
+        hunger_graph = LineGraph(
+            "7-Day Hunger Levels", 
+            [hunger_data], 
+            ["#E74C3C"], 
+            ["Hunger"], 
+            "Level (1-5)",
+            dates=dates
+        )
+        
+        # Add all graphs
+        all_graphs = [
+            calories_graph, 
+            protein_graph, 
+            carbs_graph, 
+            fats_graph, 
+            energy_graph, 
+            hunger_graph
+        ]
+        
+        for graph in all_graphs:
             graphs.add_widget(graph)
         
-        Clock.schedule_once(lambda dt: self._draw_all_graphs([
-            calories_graph, macros_graph, energy_graph, hunger_graph]), 0.3)
+        Clock.schedule_once(lambda dt: self._draw_all_graphs(all_graphs), 0.3)
     
     def _draw_all_graphs(self, graphs):
         """Draw all graphs"""
@@ -592,9 +691,37 @@ class ChatScreen(BoxLayout):
         if self.ids.chat_history.children:
             self.ids.chat_history.remove_widget(self.ids.chat_history.children[0])
     
-    def open_meal_screen(self, instance):
+    def open_navigation_popup(self, instance):
+        """Open navigation popup instead of directly going to meal screen"""
+        popup = NavigationPopup(self)
+        popup.open()
+
+# ==============================
+# NAVIGATION POPUP
+# ==============================
+class NavigationPopup(Popup):
+    def __init__(self, chat_screen, **kwargs):
+        super().__init__(**kwargs)
+        self.chat_screen = chat_screen
+    
+    def go_to_chat(self):
+        # Already on chat screen, just close popup
+        self.dismiss()
+    
+    def go_to_meal_logging(self):
+        self.dismiss()
         App.get_running_app().root.clear_widgets()
-        App.get_running_app().root.add_widget(MealLoggingScreen(self))
+        App.get_running_app().root.add_widget(MealLoggingScreen(self.chat_screen))
+    
+    def go_to_macro_goals(self):
+        self.dismiss()
+        App.get_running_app().root.clear_widgets()
+        App.get_running_app().root.add_widget(UserMacroGoals(self.chat_screen))
+    
+    def go_to_recipe_generator(self):
+        self.dismiss()
+        App.get_running_app().root.clear_widgets()
+        App.get_running_app().root.add_widget(RecipeGenerator(self.chat_screen))
 
 # ==============================
 # MEAL LOGGING SCREEN
@@ -878,17 +1005,10 @@ class MealLoggingScreen(BoxLayout):
             self.selected_image = filepath
             print("Photo saved to:", filepath)
             
-            # Display preview - ensure entire image is visible
+            # Display preview
             self.ids.img_placeholder.opacity = 0
             self.ids.img_preview.source = filepath
             self.ids.img_preview.reload()
-            self.ids.img_preview.size_hint = (None, None)  # Manual control
-            self.ids.img_preview.allow_stretch = False  # Don't stretch
-            self.ids.img_preview.keep_ratio = True  # Maintain aspect ratio
-            
-            # Get the container size (assuming it's in a layout)
-            container_width = self.ids.img_preview.parent.width * 0.9  # 90% of container
-            container_height = self.ids.img_preview.parent.height * 0.5  # 50% of container
             
             # Load the image to get its actual dimensions
             from kivy.core.image import Image as CoreImage
@@ -896,18 +1016,27 @@ class MealLoggingScreen(BoxLayout):
             img_width, img_height = img.texture.size
             img_aspect = img_width / img_height
             
+            # Get the container (FloatLayout) size
+            container = self.ids.img_preview.parent
+            container_width = container.width
+            container_height = container.height
+            
             # Calculate size that fits entirely in container
             if img_aspect > (container_width / container_height):
                 # Image is wider - fit to width
-                preview_width = container_width
-                preview_height = container_width / img_aspect
+                preview_width = container_width * 0.9
+                preview_height = preview_width / img_aspect
             else:
                 # Image is taller - fit to height
-                preview_height = container_height
-                preview_width = container_height * img_aspect
+                preview_height = container_height * 0.9
+                preview_width = preview_height * img_aspect
             
+            # Set size and manually center it
             self.ids.img_preview.size = (preview_width, preview_height)
-            self.ids.img_preview.pos_hint = {"center_x": 0.5, "center_y": 0.5}
+            self.ids.img_preview.pos = (
+                container.x + (container_width - preview_width) / 2,
+                container.y + (container_height - preview_height) / 2
+            )
             self.ids.img_preview.opacity = 1
             
             # Auto-analyze the captured image
@@ -941,13 +1070,6 @@ class MealLoggingScreen(BoxLayout):
                 self.ids.img_placeholder.opacity = 0
                 self.ids.img_preview.source = path
                 self.ids.img_preview.reload()
-                self.ids.img_preview.size_hint = (None, None)  # Manual control
-                self.ids.img_preview.allow_stretch = False  # Don't stretch
-                self.ids.img_preview.keep_ratio = True  # Maintain aspect ratio
-                
-                # Get the container size
-                container_width = self.ids.img_preview.parent.width * 0.9
-                container_height = self.ids.img_preview.parent.height * 0.5
                 
                 # Load the image to get its actual dimensions
                 from kivy.core.image import Image as CoreImage
@@ -955,16 +1077,27 @@ class MealLoggingScreen(BoxLayout):
                 img_width, img_height = img.texture.size
                 img_aspect = img_width / img_height
                 
+                # Get the container (FloatLayout) size
+                container = self.ids.img_preview.parent
+                container_width = container.width
+                container_height = container.height
+                
                 # Calculate size that fits entirely in container
                 if img_aspect > (container_width / container_height):
-                    preview_width = container_width
-                    preview_height = container_width / img_aspect
+                    # Image is wider - fit to width
+                    preview_width = container_width * 0.9  # 90% of container
+                    preview_height = preview_width / img_aspect
                 else:
-                    preview_height = container_height
-                    preview_width = container_height * img_aspect
+                    # Image is taller - fit to height
+                    preview_height = container_height * 0.9  # 90% of container
+                    preview_width = preview_height * img_aspect
                 
+                # Set size and manually center it
                 self.ids.img_preview.size = (preview_width, preview_height)
-                self.ids.img_preview.pos_hint = {"center_x": 0.5, "center_y": 0.5}
+                self.ids.img_preview.pos = (
+                    container.x + (container_width - preview_width) / 2,
+                    container.y + (container_height - preview_height) / 2
+                )
                 self.ids.img_preview.opacity = 1
 
                 Clock.schedule_once(lambda dt: self.auto_analyze_image(), 0.1)
@@ -1026,13 +1159,36 @@ class MealLoggingScreen(BoxLayout):
             data.seek(0)
             
             # Create core image for preview
-            core_img = CoreImage(data, ext="jpg")  # Changed to jpg since most photos are jpg
+            from kivy.core.image import Image as CoreImage
+            core_img = CoreImage(data, ext="jpg")
             
             def update_preview(dt):
                 self.ids.img_placeholder.opacity = 0
+                
+                # Get texture dimensions
+                img_width, img_height = core_img.texture.size
+                img_aspect = img_width / img_height
+                
+                # Get container size
+                container = self.ids.img_preview.parent
+                container_width = container.width
+                container_height = container.height
+                
+                # Calculate fitted size
+                if img_aspect > (container_width / container_height):
+                    preview_width = container_width * 0.9
+                    preview_height = preview_width / img_aspect
+                else:
+                    preview_height = container_height * 0.9
+                    preview_width = preview_height * img_aspect
+                
+                # Apply texture and position
                 self.ids.img_preview.texture = core_img.texture
-                self.ids.img_preview.size_hint = (0.8, 0.8)
-                self.ids.img_preview.pos_hint = {"center_x": 0.5, "center_y": 0.5}
+                self.ids.img_preview.size = (preview_width, preview_height)
+                self.ids.img_preview.pos = (
+                    container.x + (container_width - preview_width) / 2,
+                    container.y + (container_height - preview_height) / 2
+                )
                 self.ids.img_preview.opacity = 1
             
             Clock.schedule_once(update_preview, 0)
@@ -1303,6 +1459,464 @@ class MealSurveyPopup(Popup):
         
         # Dismiss the popup
         self.dismiss()
+
+# ==============================
+# USER MACRO GOALS SCREEN
+# ==============================
+class UserMacroGoals(BoxLayout):
+    def __init__(self, chat_screen, **kwargs):
+        super().__init__(**kwargs)
+        self.chat_screen = chat_screen
+        self.load_current_goals()
+    
+    def load_current_goals(self):
+        """Load current macro goals from Firebase and populate fields"""
+        def load():
+            try:
+                user_doc = get_user_doc(USER_ID)
+                if user_doc and 'daily_macros_goal' in user_doc:
+                    goals = user_doc['daily_macros_goal']
+                    Clock.schedule_once(lambda dt: self._populate_fields(goals), 0)
+            except Exception as e:
+                print(f"Error loading macro goals: {e}")
+                traceback.print_exc()
+        
+        threading.Thread(target=load, daemon=True).start()
+    
+    def _populate_fields(self, goals):
+        """Populate input fields with current goals"""
+        if 'calories' in goals:
+            self.ids.calories_input.ids.input_field.text = str(goals['calories'])
+        if 'proteins' in goals:
+            self.ids.proteins_input.ids.input_field.text = str(goals['proteins'])
+        if 'carbs' in goals:
+            self.ids.carbs_input.ids.input_field.text = str(goals['carbs'])
+        if 'fats' in goals:
+            self.ids.fats_input.ids.input_field.text = str(goals['fats'])
+    
+    def save_goals(self, instance):
+        """Save macro goals to Firebase"""
+        # Get values from input fields
+        calories_text = self.ids.calories_input.ids.input_field.text.strip()
+        proteins_text = self.ids.proteins_input.ids.input_field.text.strip()
+        carbs_text = self.ids.carbs_input.ids.input_field.text.strip()
+        fats_text = self.ids.fats_input.ids.input_field.text.strip()
+        
+        # Build update dict - only include non-empty fields
+        updates = {}
+        if calories_text:
+            try:
+                updates['calories'] = int(float(calories_text))
+            except ValueError:
+                pass
+        
+        if proteins_text:
+            try:
+                updates['proteins'] = int(float(proteins_text))
+            except ValueError:
+                pass
+        
+        if carbs_text:
+            try:
+                updates['carbs'] = int(float(carbs_text))
+            except ValueError:
+                pass
+        
+        if fats_text:
+            try:
+                updates['fats'] = int(float(fats_text))
+            except ValueError:
+                pass
+        
+        # If no valid updates, show message and return
+        if not updates:
+            self.show_status("No changes to save", error=True)
+            return
+        
+        # Disable save button during upload
+        self.ids.save_btn.disabled = True
+        self.ids.save_btn.text = "Saving..."
+        
+        # Upload in background thread
+        def upload():
+            try:
+                success = update_macro_goals(USER_ID, updates)
+                if success:
+                    Clock.schedule_once(lambda dt: self.show_status("Goals saved successfully!", error=False), 0)
+                    Clock.schedule_once(lambda dt: self.chat_screen.load_macros(), 0.5)
+                else:
+                    Clock.schedule_once(lambda dt: self.show_status("Failed to save goals", error=True), 0)
+            except Exception as e:
+                print(f"Error saving goals: {e}")
+                traceback.print_exc()
+                Clock.schedule_once(lambda dt: self.show_status("Error saving goals", error=True), 0)
+            finally:
+                Clock.schedule_once(lambda dt: self._reset_button(), 0)
+        
+        threading.Thread(target=upload, daemon=True).start()
+    
+    def _reset_button(self):
+        """Reset save button state"""
+        self.ids.save_btn.disabled = False
+        self.ids.save_btn.text = "Save Goals"
+    
+    def show_status(self, message, error=False):
+        """Show status message"""
+        self.ids.status_label.text = message
+        self.ids.status_label.color = get_color_from_hex("#FF6B6B") if error else get_color_from_hex("#B0CA87")
+        # Clear message after 3 seconds
+        Clock.schedule_once(lambda dt: setattr(self.ids.status_label, 'text', ''), 3)
+    
+    def go_back(self, instance):
+        """Return to chat screen"""
+        App.get_running_app().root.clear_widgets()
+        App.get_running_app().root.add_widget(self.chat_screen)
+
+# =============================
+# RECIPE GENERATOR SCREEN
+# =============================
+def _display_image(self, filepath):
+    """Display selected image"""
+    try:
+        self.current_image_path = filepath
+        
+        # Hide placeholder
+        self.ids.img_placeholder.opacity = 0
+        
+        # Load image source
+        self.ids.img_preview.source = filepath
+        self.ids.img_preview.reload()
+        
+        # Load the image to get its actual dimensions
+        from kivy.core.image import Image as CoreImage
+        img = CoreImage(filepath)
+        img_width, img_height = img.texture.size
+        img_aspect = img_width / img_height
+        
+        # Get the container (FloatLayout) size
+        container = self.ids.img_preview.parent
+        container_width = container.width
+        container_height = container.height
+        
+        # Calculate size that fits entirely in container
+        if img_aspect > (container_width / container_height):
+            # Image is wider - fit to width
+            preview_width = container_width * 0.9  # 90% of container
+            preview_height = preview_width / img_aspect
+        else:
+            # Image is taller - fit to height
+            preview_height = container_height * 0.9  # 90% of container
+            preview_width = preview_height * img_aspect
+        
+        # Set size and manually center it
+        self.ids.img_preview.size = (preview_width, preview_height)
+        self.ids.img_preview.pos = (
+            container.x + (container_width - preview_width) / 2,
+            container.y + (container_height - preview_height) / 2
+        )
+        self.ids.img_preview.opacity = 1
+        
+        self.show_status("Image loaded successfully")
+        
+    except Exception as e:
+        print(f"[Recipe] Error displaying image: {e}")
+        traceback.print_exc()
+        self.show_status("Failed to display image", error=True)
+
+
+# ============================================
+# COMPLETE UPDATED RecipeGenerator CLASS
+# ============================================
+
+
+class RecipeGenerator(BoxLayout):
+    def __init__(self, chat_screen, **kwargs):
+        super().__init__(**kwargs)
+        self.chat_screen = chat_screen
+        self.current_image_path = None
+    
+    def take_photo(self, instance):
+        """Take a photo using camera"""
+        try:
+            if platform == 'android':
+                from android.permissions import request_permissions, Permission, check_permission
+                
+                if not check_permission(Permission.CAMERA):
+                    request_permissions([Permission.CAMERA], self._on_camera_permission_result)
+                    return
+                
+                Clock.schedule_once(lambda dt: self._open_camera_widget(), 0)
+                
+            else:
+                self.show_status("Camera is only available on mobile devices", error=True)
+                
+        except Exception as e:
+            print(f"[Recipe] Camera error: {e}")
+            self.show_status("Failed to open camera", error=True)
+    
+    def _on_camera_permission_result(self, permissions, grant_results):
+        """Callback when camera permission is granted/denied"""
+        if all(grant_results):
+            Clock.schedule_once(lambda dt: self._open_camera_widget(), 0)
+        else:
+            Clock.schedule_once(
+                lambda dt: self.show_status(
+                    "Camera permission required. Enable in Settings.", 
+                    error=True
+                ), 0
+            )
+    
+    def _open_camera_widget(self):
+        """Open camera using Kivy Camera widget"""
+        from kivy.uix.camera import Camera
+        from kivy.uix.button import Button
+        from kivy.uix.boxlayout import BoxLayout
+        from kivy.uix.floatlayout import FloatLayout
+        from kivy.uix.popup import Popup
+        from kivy.graphics import PushMatrix, PopMatrix, Rotate
+        
+        camera_container = FloatLayout()
+        
+        camera_widget = Camera(
+            play=True, 
+            resolution=(1280, 720), 
+            index=0,
+            size_hint=(None, None),
+            allow_stretch=True
+        )
+        
+        rotation = Rotate(angle=270, origin=(0, 0))
+        
+        with camera_widget.canvas.before:
+            PushMatrix()
+            camera_widget.canvas.before.add(rotation)
+        with camera_widget.canvas.after:
+            PopMatrix()
+        
+        def update_camera_transform(instance, value):
+            container_width = camera_container.width
+            container_height = camera_container.height - 50
+            
+            camera_widget.width = container_height
+            camera_widget.height = container_width
+            
+            camera_widget.x = camera_container.x + (container_width - camera_widget.width) / 2
+            camera_widget.y = camera_container.y + 50 + (container_height - camera_widget.height) / 2
+            
+            rotation.origin = (camera_widget.center_x, camera_widget.center_y)
+        
+        camera_container.bind(pos=update_camera_transform, size=update_camera_transform)
+        camera_container.add_widget(camera_widget)
+        
+        button_layout = BoxLayout(
+            size_hint=(1, None),
+            height=50,
+            pos_hint={'x': 0, 'y': 0}
+        )
+        
+        cancel_btn = Button(
+            text='Cancel',
+            background_color=(0.5, 0.5, 0.5, 1)
+        )
+        
+        capture_btn = Button(
+            text='Capture Photo',
+            background_color=get_color_from_hex("#809848")
+        )
+        
+        button_layout.add_widget(cancel_btn)
+        button_layout.add_widget(capture_btn)
+        camera_container.add_widget(button_layout)
+        
+        camera_popup = Popup(
+            title='',
+            content=camera_container,
+            size_hint=(1, 1),
+            auto_dismiss=False,
+            separator_height=0,
+            title_size=0
+        )
+        
+        def capture_photo(instance):
+            try:
+                if platform == 'android':
+                    from android.storage import app_storage_path
+                    temp_dir = app_storage_path()
+                else:
+                    temp_dir = os.path.expanduser("~")
+                
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                filepath = os.path.join(temp_dir, f"recipe_photo_{timestamp}.png")
+                
+                camera_widget.export_to_png(filepath)
+                camera_widget.play = False
+                camera_popup.dismiss()
+                
+                print(f"Photo saved to: {filepath}")
+                Clock.schedule_once(lambda dt: self._display_image(filepath), 0.1)
+                
+            except Exception as e:
+                camera_widget.play = False
+                camera_popup.dismiss()
+                self.show_status(f"Could not capture photo: {str(e)}", error=True)
+                print(f"Capture error: {e}")
+        
+        def cancel_camera(instance):
+            camera_widget.play = False
+            camera_popup.dismiss()
+        
+        capture_btn.bind(on_press=capture_photo)
+        cancel_btn.bind(on_press=cancel_camera)
+        
+        camera_popup.open()
+        Clock.schedule_once(lambda dt: update_camera_transform(camera_container, None), 0.1)
+    
+    def upload_image(self, instance):
+        """Upload an image from gallery"""
+        try:
+            if platform == 'android':
+                from android.permissions import request_permissions, Permission
+                request_permissions([Permission.READ_EXTERNAL_STORAGE])
+            filechooser.open_file(on_selection=self.on_file_selected, filters=['*.jpg', '*.png', '*.jpeg'])
+        except Exception as e:
+            print(f"[Recipe] File chooser error: {e}")
+            traceback.print_exc()
+            self.show_status("Failed to open file chooser", error=True)
+    
+    def on_file_selected(self, selection):
+        """Handle file selection"""
+        if selection:
+            Clock.schedule_once(lambda dt: self._display_image(selection[0]), 0)
+    
+    def _display_image(self, filepath):
+        """Display selected image"""
+        try:
+            self.current_image_path = filepath
+            
+            self.ids.img_placeholder.opacity = 0
+            self.ids.img_preview.source = filepath
+            self.ids.img_preview.reload()
+            
+            from kivy.core.image import Image as CoreImage
+            img = CoreImage(filepath)
+            img_width, img_height = img.texture.size
+            img_aspect = img_width / img_height
+            
+            container = self.ids.img_preview.parent
+            container_width = container.width
+            container_height = container.height
+            
+            if img_aspect > (container_width / container_height):
+                preview_width = container_width * 0.9
+                preview_height = preview_width / img_aspect
+            else:
+                preview_height = container_height * 0.9
+                preview_width = preview_height * img_aspect
+            
+            self.ids.img_preview.size = (preview_width, preview_height)
+            self.ids.img_preview.pos = (
+                container.x + (container_width - preview_width) / 2,
+                container.y + (container_height - preview_height) / 2
+            )
+            self.ids.img_preview.opacity = 1
+            
+            self.show_status("Image loaded successfully")
+            
+        except Exception as e:
+            print(f"[Recipe] Error displaying image: {e}")
+            traceback.print_exc()
+            self.show_status("Failed to display image", error=True)
+    
+    def generate_recipe(self, instance):
+        """Generate recipe based on text and/or image input"""
+        text_prompt = self.ids.recipe_input.ids.text_input.text.strip()
+        has_image = self.current_image_path is not None
+        
+        if not text_prompt and not has_image:
+            self.show_status("Please provide a text prompt or upload an image of ingredients", error=True)
+            return
+        
+        # Show generating status
+        self.show_status("Generating recipe... (10-30 seconds)")
+        self.ids.generate_btn.disabled = True
+        self.ids.generate_btn.text = "Generating..."
+        
+        # Process in background thread
+        threading.Thread(target=self._process_recipe_request, args=(text_prompt, has_image), daemon=True).start()
+    
+    def _process_recipe_request(self, text_prompt, has_image):
+        """Process the recipe generation request"""
+        try:
+            # Case 1: Image only
+            if has_image and not text_prompt:
+                Clock.schedule_once(lambda dt: self._handle_image_only(), 0)
+            
+            # Case 2: Text only
+            elif text_prompt and not has_image:
+                response = get_recipe_from_text(text_prompt)
+                Clock.schedule_once(lambda dt: self._display_response(response), 0)
+            
+            # Case 3: Both text and image
+            elif text_prompt and has_image:
+                response = get_recipe_from_text_and_image(text_prompt, self.current_image_path)
+                Clock.schedule_once(lambda dt: self._display_response(response), 0)
+        
+        except Exception as e:
+            print(f"[Recipe] Error generating recipe: {e}")
+            traceback.print_exc()
+            Clock.schedule_once(lambda dt: self._display_response("Failed to generate recipe. Please try again."), 0)
+        finally:
+            Clock.schedule_once(lambda dt: self._reset_button(), 0)
+    
+    def _handle_image_only(self):
+        """Handle case where only image is provided"""
+        self.show_status("Analyzing image...")
+        
+        def analyze():
+            try:
+                description = describe_food(self.current_image_path)
+                
+                if description and any(word in description.lower() for word in ['ingredient', 'vegetable', 'produce', 'raw', 'fresh']):
+                    recipe = get_recipe_from_image(self.current_image_path)
+                    Clock.schedule_once(lambda dt: self._display_response(recipe), 0)
+                else:
+                    message = f"Image description: {description}\n\nThis doesn't appear to be ingredients. Please provide a text prompt describing what recipe you'd like to generate."
+                    Clock.schedule_once(lambda dt: self._display_response(message), 0)
+            except Exception as e:
+                print(f"[Recipe] Error analyzing image: {e}")
+                traceback.print_exc()
+                Clock.schedule_once(lambda dt: self._display_response("Failed to analyze image. Please try again or add a text prompt."), 0)
+            finally:
+                Clock.schedule_once(lambda dt: self._reset_button(), 0)
+        
+        threading.Thread(target=analyze, daemon=True).start()
+    
+    def _display_response(self, response):
+        """Display the generated recipe in a popup"""
+        RecipePopup(recipe_text=response).open()
+        self.show_status("Recipe generated successfully")
+    
+    def _reset_button(self):
+        """Reset generate button state"""
+        self.ids.generate_btn.disabled = False
+        self.ids.generate_btn.text = "Generate Recipe"
+    
+    def show_status(self, message, error=False):
+        """Show status message"""
+        self.ids.status_label.text = message
+        self.ids.status_label.color = get_color_from_hex("#FF6B6B") if error else get_color_from_hex("#B0CA87")
+    
+    def go_back(self, instance):
+        """Return to chat screen"""
+        App.get_running_app().root.clear_widgets()
+        App.get_running_app().root.add_widget(self.chat_screen)
+
+class RecipePopup(Popup):
+    recipe_text = StringProperty("") 
+
+    def __init__(self, recipe_text, **kwargs):
+        super().__init__(**kwargs)
+        self.recipe_text = recipe_text
 
 # ==============================
 # MAIN APP

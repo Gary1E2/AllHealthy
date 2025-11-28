@@ -9,6 +9,7 @@ import traceback
 # ==============================
 # CONFIG
 # ==============================
+# insert your ngrok url here
 NGROK_URL = "https://unsurgical-semiliberally-myron.ngrok-free.dev"
 REQUEST_TIMEOUT = 500
 CHAT_TIMEOUT = 120
@@ -252,8 +253,17 @@ def get_chat_response(user_message, context=None):
     """Generate a chat response using the remote LLM"""
     print(f"[CHAT] User asked: {user_message}")
     
+    # Extract all context fields
     daily_macros = context.get('daily_macros') if context else None
-    payload = {"message": user_message, "daily_macros": daily_macros}
+    daily_goals = context.get('daily_goals') if context else None
+    meals_logged = context.get('meals_logged') if context else None
+    
+    payload = {
+        "message": user_message,
+        "daily_macros": daily_macros,
+        "daily_goals": daily_goals,
+        "meals_logged": meals_logged
+    }
     
     result = _make_request("chat", payload, timeout=CHAT_TIMEOUT, operation="Chat")
     if result:
@@ -262,6 +272,97 @@ def get_chat_response(user_message, context=None):
         return chat_response
     
     return "Sorry, I couldn't process your request. Please try again."
+
+# ==============================
+# RECIPE GENERATION FUNCTIONS
+# Add these to chatbot.py
+# ==============================
+
+def get_recipe_from_text(text_prompt):
+    """
+    Generate a recipe from text description only.
+    Double response length for detailed recipe with measurements.
+    """
+    print(f"[Recipe] Generating recipe from text: {text_prompt}")
+    
+    payload = {
+        "recipe_prompt": text_prompt,
+        "mode": "text_only"
+    }
+    
+    result = _make_request("generate_recipe", payload, timeout=CHAT_TIMEOUT, operation="Recipe generation")
+    
+    if result:
+        recipe = result.get("recipe", "Failed to generate recipe.")
+        print(f"[Recipe] Generated recipe (text)")
+        return recipe
+    
+    return "Sorry, I couldn't generate a recipe. Please try again."
+
+
+def get_recipe_from_image(image_path):
+    """
+    Generate a recipe from image of ingredients only.
+    """
+    if not os.path.exists(image_path):
+        print(f"[Recipe ERROR] Image not found: {image_path}")
+        return "Image not found. Please try again."
+    
+    print(f"[Recipe] Generating recipe from image: {image_path}")
+    
+    try:
+        image_base64 = compress_and_encode_image(image_path)
+    except Exception as e:
+        print(f"[Recipe ERROR] Failed to encode image: {e}")
+        return "Failed to process image. Please try again."
+    
+    payload = {
+        "image_base64": image_base64,
+        "mode": "image_only"
+    }
+    
+    result = _make_request("generate_recipe", payload, timeout=CHAT_TIMEOUT, operation="Recipe generation")
+    
+    if result:
+        recipe = result.get("recipe", "Failed to generate recipe.")
+        print(f"[Recipe] Generated recipe (image)")
+        return recipe
+    
+    return "Sorry, I couldn't generate a recipe. Please try again."
+
+
+def get_recipe_from_text_and_image(text_prompt, image_path):
+    """
+    Generate a recipe from both text prompt and image of ingredients.
+    Text prompt guides the recipe style, image provides available ingredients.
+    """
+    if not os.path.exists(image_path):
+        print(f"[Recipe ERROR] Image not found: {image_path}")
+        return "Image not found. Please try again."
+    
+    print(f"[Recipe] Generating recipe from text + image")
+    print(f"[Recipe] Text: {text_prompt}")
+    
+    try:
+        image_base64 = compress_and_encode_image(image_path)
+    except Exception as e:
+        print(f"[Recipe ERROR] Failed to encode image: {e}")
+        return "Failed to process image. Please try again."
+    
+    payload = {
+        "recipe_prompt": text_prompt,
+        "image_base64": image_base64,
+        "mode": "text_and_image"
+    }
+    
+    result = _make_request("generate_recipe", payload, timeout=CHAT_TIMEOUT, operation="Recipe generation")
+    
+    if result:
+        recipe = result.get("recipe", "Failed to generate recipe.")
+        print(f"[Recipe] Generated recipe (text + image)")
+        return recipe
+    
+    return "Sorry, I couldn't generate a recipe. Please try again."
 
 # ==============================
 # STARTUP CHECK
@@ -277,9 +378,9 @@ if __name__ == "__main__":
     else:
         print("\nFAILED! Cannot connect to remote server.")
         print("\nTroubleshooting:")
-        print("1. Make sure Google Colab notebook is running")
-        print("2. Check that cloudflare tunnel is active in Colab")
-        print("3. Copy the correct cloudflare URL from Colab output")
+        print("1. Make sure serverchatbot.py is running")
+        print("2. Check that ngrok is active in serverchatbot.py")
+        print("3. Copy the correct ngrok url from serverchatbot.py output")
         print(f"4. Update NGROK_URL in this file: {__file__}")
         print(f"   Current URL: {NGROK_URL}")
     

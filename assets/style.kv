@@ -281,7 +281,7 @@
                     radius: [dp(3)]
 
 # ==============================
-# CHAT SCREEN
+# CHAT SCREEN - UPDATED
 # ==============================
 <ChatScreen>:
     orientation: "vertical"
@@ -330,14 +330,66 @@
                 on_release: root.send_chat(self)
         
         RoundedButton:
-            text: "Log\nMeal"
+            text: "^"
             bg_color: get_color_from_hex("#809848")
             color: get_color_from_hex("#BFD1E5")
             size_hint: 0.2, 1
             bold: True
-            font_size: dp(16)
-            on_press: root.open_meal_screen(self)
-            markup: True
+            font_size: dp(28)
+            on_press: root.open_navigation_popup(self)
+
+# ==============================
+# NAVIGATION POP UP
+# ==============================
+<NavigationPopup>:
+    title: "Navigate To"
+    size_hint: 0.8, 0.6
+    auto_dismiss: False
+    
+    BoxLayout:
+        orientation: 'vertical'
+        spacing: dp(10)
+        padding: dp(15)
+        
+        RoundedButton:
+            text: "Chat"
+            size_hint: 1, None
+            height: dp(60)
+            bg_color: get_color_from_hex("#809848")
+            color: get_color_from_hex("#BFD1E5")
+            font_size: dp(18)
+            bold: True
+            on_press: root.go_to_chat()
+        
+        RoundedButton:
+            text: "Meal Logging"
+            size_hint: 1, None
+            height: dp(60)
+            bg_color: get_color_from_hex("#B0CA87")
+            color: get_color_from_hex("#1E2D2F")
+            font_size: dp(18)
+            bold: True
+            on_press: root.go_to_meal_logging()
+        
+        RoundedButton:
+            text: "Macro Goals"
+            size_hint: 1, None
+            height: dp(60)
+            bg_color: get_color_from_hex("#7D4E57")
+            color: get_color_from_hex("#BFD1E5")
+            font_size: dp(18)
+            bold: True
+            on_press: root.go_to_macro_goals()
+        
+        RoundedButton:
+            text: "Recipe Generator"
+            size_hint: 1, None
+            height: dp(60)
+            bg_color: get_color_from_hex("#4A5A4B")
+            color: get_color_from_hex("#BFD1E5")
+            font_size: dp(18)
+            bold: True
+            on_press: root.go_to_recipe_generator()
 
 # ==============================
 # MEAL LOGGING SCREEN - FIXED
@@ -488,6 +540,7 @@
                 id: img_preview
                 size_hint: None, None
                 size: 0, 0
+                pos_hint: {}
                 allow_stretch: True
                 keep_ratio: True
                 opacity: 0
@@ -690,6 +743,314 @@
             font_size: '18sp'
             bold: True
             on_release: root.submit(self)
+
+# ==============================
+# USER MACRO GOALS SCREEN
+# ==============================
+<UserMacroGoals>:
+    orientation: "vertical"
+    padding: dp(15)
+    spacing: dp(15)
+    canvas.before:
+        Color:
+            rgba: get_color_from_hex("#1E2D2F")
+        Rectangle:
+            pos: self.pos
+            size: self.size
+    
+    # Header
+    BoxLayout:
+        size_hint_y: None
+        height: dp(40)
+        spacing: dp(10)
+        
+        RoundedButton:
+            text: "Back"
+            size_hint_x: 0.2
+            bg_color: get_color_from_hex("#7D4E57")
+            color: get_color_from_hex("#BFD1E5")
+            font_size: dp(16)
+            on_press: root.go_back(self)
+        
+        Label:
+            text: "Macro Goals"
+            font_size: dp(22)
+            bold: True
+            color: get_color_from_hex("#B0CA87")
+            size_hint_x: 0.8
+    
+    # Description
+    Label:
+        text: "Edit your daily intake goals"
+        font_size: dp(16)
+        color: get_color_from_hex("#BFD1E5")
+        size_hint_y: None
+        height: dp(30)
+        halign: 'center'
+    
+    # Spacer
+    Widget:
+        size_hint_y: 0.1
+    
+    # Nutrition inputs - TWO COLUMNS
+    BoxLayout:
+        orientation: 'horizontal'
+        size_hint_y: None
+        height: dp(120)
+        spacing: dp(10)
+        
+        # Left column: Calories and Proteins
+        BoxLayout:
+            orientation: 'vertical'
+            spacing: dp(8)
+            
+            NutritionInput:
+                id: calories_input
+                field_label: "Calories"
+            
+            NutritionInput:
+                id: proteins_input
+                field_label: "Proteins (g)"
+        
+        # Right column: Carbs and Fats
+        BoxLayout:
+            orientation: 'vertical'
+            spacing: dp(8)
+            
+            NutritionInput:
+                id: carbs_input
+                field_label: "Carbs (g)"
+            
+            NutritionInput:
+                id: fats_input
+                field_label: "Fats (g)"
+    
+    # Status label
+    Label:
+        id: status_label
+        text: ""
+        font_size: dp(14)
+        size_hint_y: None
+        height: dp(25)
+        color: get_color_from_hex("#B0CA87")
+    
+    # Spacer to push button to bottom
+    Widget:
+        size_hint_y: 1
+    
+    # Save button
+    BoxLayout:
+        size_hint_y: None
+        height: dp(55)
+        padding: 0, dp(5), 0, 0
+        
+        RoundedButton:
+            id: save_btn
+            text: "Save Goals"
+            size_hint_y: None
+            height: dp(50)
+            bg_color: get_color_from_hex("#809848")
+            color: get_color_from_hex("#BFD1E5")
+            font_size: dp(17)
+            bold: True
+            on_press: root.save_goals(self)
+
+# ==============================
+# RECIPE GENERATOR SCREEN
+# ==============================
+<RecipeGenerator>:
+    orientation: "vertical"
+    padding: dp(15)
+    spacing: dp(8)
+    canvas.before:
+        Color:
+            rgba: get_color_from_hex("#1E2D2F")
+        Rectangle:
+            pos: self.pos
+            size: self.size
+    
+    # Header
+    BoxLayout:
+        size_hint_y: None
+        height: dp(40)
+        spacing: dp(10)
+        
+        RoundedButton:
+            text: "Back"
+            size_hint_x: 0.2
+            bg_color: get_color_from_hex("#7D4E57")
+            color: get_color_from_hex("#BFD1E5")
+            font_size: dp(16)
+            on_press: root.go_back(self)
+        
+        Label:
+            text: "Recipe Generator"
+            font_size: dp(22)
+            bold: True
+            color: get_color_from_hex("#B0CA87")
+            size_hint_x: 0.8
+    
+    # Description
+    Label:
+        text: "Generate a recipe with available ingredients or description"
+        font_size: dp(14)
+        color: get_color_from_hex("#BFD1E5")
+        size_hint_y: None
+        height: dp(25)
+        halign: 'center'
+    
+    # Image section
+    BoxLayout:
+        orientation: 'vertical'
+        size_hint_y: None
+        height: dp(140)
+        spacing: dp(5)
+        
+        Label:
+            text: "Ingredient Image (Optional):"
+            font_size: dp(14)
+            bold: True
+            size_hint_y: None
+            height: dp(22)
+            halign: 'left'
+            text_size: self.size
+        
+        FloatLayout:
+            size_hint_y: None
+            height: dp(100)
+            canvas.before:
+                Color:
+                    rgba: 0.2, 0.2, 0.2, 1
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [dp(8)]
+            
+            Label:
+                id: img_placeholder
+                text: "No image selected"
+                font_size: dp(12)
+                pos_hint: {'center_x': 0.5, 'center_y': 0.5}
+                markup: True
+                color: 0.6, 0.6, 0.6, 1
+            
+            Image:
+                id: img_preview
+                size_hint: None, None
+                size: 0, 0
+                pos_hint: {}
+                allow_stretch: True
+                keep_ratio: True
+                opacity: 0
+        
+        Label:
+            id: status_label
+            text: ""
+            size_hint_y: None
+            height: dp(18)
+            font_size: dp(11)
+            color: get_color_from_hex("#B0CA87")
+            halign: 'center'
+            text_size: self.size
+    
+    # Image upload buttons
+    BoxLayout:
+        size_hint_y: None
+        height: dp(40)
+        spacing: dp(8)
+        
+        RoundedButton:
+            text: "Take Photo"
+            bg_color: get_color_from_hex("#809848")
+            color: get_color_from_hex("#BFD1E5")
+            font_size: dp(14)
+            bold: True
+            on_press: root.take_photo(self)
+        
+        RoundedButton:
+            text: "Upload Image"
+            bg_color: get_color_from_hex("#B0CA87")
+            color: get_color_from_hex("#1E2D2F")
+            font_size: dp(14)
+            bold: True
+            on_press: root.upload_image(self)
+    
+    # Text input for recipe prompt
+    TextInputField:
+        id: recipe_input
+        field_label: "Recipe Prompt (Optional)"
+        size_hint_y: None
+        height: dp(85)
+    
+    # Status message (replaces response box)
+    BoxLayout:
+        orientation: 'vertical'
+        size_hint_y: 1
+        
+        Label:
+            id: generation_status
+            text: "Enter a prompt or upload ingredients to generate a recipe"
+            font_size: dp(14)
+            color: get_color_from_hex("#BFD1E5")
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
+    
+    # Generate button
+    BoxLayout:
+        size_hint_y: None
+        height: dp(55)
+        padding: 0, dp(5), 0, 0
+        
+        RoundedButton:
+            id: generate_btn
+            text: "Generate Recipe"
+            size_hint_y: None
+            height: dp(50)
+            bg_color: get_color_from_hex("#809848")
+            color: get_color_from_hex("#BFD1E5")
+            font_size: dp(17)
+            bold: True
+            on_press: root.generate_recipe(self)
+
+
+<RecipePopup>:
+    title: "Generated Recipe"
+    size_hint: 0.95, 0.85
+    auto_dismiss: False
+    
+    BoxLayout:
+        orientation: 'vertical'
+        spacing: dp(10)
+        padding: dp(10)
+        
+        ScrollView:
+            size_hint: 1, 1
+            do_scroll_x: False
+            bar_width: dp(8)
+            
+            Label:
+                id: recipe_label
+                text: root.recipe_text
+                markup: True
+                size_hint_y: None
+                height: self.texture_size[1]
+                font_size: dp(14)
+                padding: dp(10), dp(10)
+                text_size: self.width - dp(20), None
+                halign: 'left'
+                valign: 'top'
+                color: 1, 1, 1, 1
+        
+        RoundedButton:
+            text: "Close"
+            size_hint: 1, None
+            height: dp(50)
+            bg_color: get_color_from_hex("#7D4E57")
+            color: get_color_from_hex("#BFD1E5")
+            font_size: dp(16)
+            bold: True
+            on_press: root.dismiss()
 
 # ==============================
 # LINE GRAPH

@@ -2,7 +2,7 @@ import torch
 import os
 import json
 
-from transformers import Qwen3VLForConditionalGeneration, AutoProcessor, BitsAndBytesConfig
+from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor, BitsAndBytesConfig
 from PIL import Image
 from flask import Flask, request, jsonify
 import base64
@@ -12,7 +12,7 @@ import requests
 from pyngrok import ngrok
 
 
-model_path = "models/Qwen3-VL-8B-Instruct"
+model_path = "models/Qwen2.5-VL-7B-Instruct"
 
 print("[LLM] Loading model…")
 
@@ -29,7 +29,7 @@ processor = AutoProcessor.from_pretrained(
 print("[LLM] Loading model...")
 
 # Use the EXACT same configuration that works in VSCode
-model = Qwen3VLForConditionalGeneration.from_pretrained(
+model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
     model_path,
     trust_remote_code=True,
     torch_dtype=torch.float16 if device == "cuda" else torch.float32,
@@ -43,7 +43,7 @@ if device == "cuda":
         print("[LLM] Applying 8-bit quantization...")
         from transformers import BitsAndBytesConfig
         # Reload with quantization
-        model = Qwen3VLForConditionalGeneration.from_pretrained(
+        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             model_path,
             trust_remote_code=True,
             quantization_config=BitsAndBytesConfig(load_in_8bit=True),
@@ -151,6 +151,7 @@ def describe_food_remote(image_base64):
         Focus on identifying the main dish, ingredients, and preparation method.
         Provide measurements in grams, cups or portions as necessary.
         Keep it brief and natural, like how someone would describe their meal.
+        Never use emojis.
         """
         
         messages = [
@@ -322,8 +323,104 @@ def get_chat_response_remote(user_message, daily_macros=None, daily_goals=None, 
         {"role": "system", "content": system_prompt.strip()},
         {"role": "user", "content": user_message.strip()}
     ]
+    print(messages)
 
     return _generate_text(messages, max_tokens=200, temperature=0.7)
+
+def generate_recipe_remote(recipe_prompt=None, image_base64=None, mode="text_only"):
+    """
+    Generate a detailed recipe with measurements.
+    
+    Args:
+        recipe_prompt: Text description of desired recipe
+        image_base64: Base64 encoded image of ingredients
+        mode: "text_only", "image_only", or "text_and_image"
+    
+    Returns:
+        Detailed recipe as a string
+    """
+    try:
+        system_prompt = """
+            You are a professional chef and recipe creator.
+            Generate detailed, practical recipes with precise measurements.
+            Always include:
+            - List of ingredients with exact measurements (cups, grams, tablespoons, etc.)
+            - Step-by-step cooking instructions
+            - Estimated cooking time and servings
+            - Any helpful tips or variations
+
+            Keep recipes clear, organized, and easy to follow.
+            Format the recipe nicely with sections for ingredients and instructions in separate paragraphs.
+            Never use emojis.
+        """
+        
+        messages = []
+        images = None
+        
+        if mode == "text_only":
+            # Text prompt only
+            if not recipe_prompt:
+                return "Error: No recipe prompt provided"
+            
+            # Check if prompt is recipe-related
+            recipe_keywords = ['recipe', 'cook', 'make', 'bake', 'prepare', 'dish', 'meal', 'food', 'ingredient']
+            if not any(keyword in recipe_prompt.lower() for keyword in recipe_keywords):
+                return "This page is for recipe generation only. Please provide a recipe-related prompt such as 'Generate a pasta recipe' or 'How to make chocolate cake'."
+            
+            user_content = f"Generate a detailed recipe based on: {recipe_prompt}"
+            messages = [
+                {"role": "system", "content": system_prompt.strip()},
+                {"role": "user", "content": user_content}
+            ]
+        
+        elif mode == "image_only":
+            # Image only - analyze ingredients and generate recipe
+            if not image_base64:
+                return "Error: No image provided"
+            
+            image = Image.open(BytesIO(base64.b64decode(image_base64))).convert("RGB").resize((224, 224))
+            images = [image]
+            
+            user_content = [
+                {"type": "image", "image": image},
+                {"type": "text", "text": "Analyze the ingredients shown in this image and generate a detailed recipe using these ingredients. Include measurements and step-by-step instructions."}
+            ]
+            
+            messages = [
+                {"role": "system", "content": system_prompt.strip()},
+                {"role": "user", "content": user_content}
+            ]
+        
+        elif mode == "text_and_image":
+            # Both text and image - use image ingredients with text guidance
+            if not recipe_prompt or not image_base64:
+                return "Error: Both prompt and image required for this mode"
+            
+            # Check if prompt is recipe-related
+            recipe_keywords = ['recipe', 'cook', 'make', 'bake', 'prepare', 'dish', 'meal', 'food', 'ingredient', 'italian', 'chinese', 'indian', 'mexican', 'asian', 'western']
+            if not any(keyword in recipe_prompt.lower() for keyword in recipe_keywords):
+                return "This page is for recipe generation only. Your prompt and image don't appear to be recipe-related. Please provide a recipe-related request such as 'Generate an Italian recipe using these ingredients'."
+            
+            image = Image.open(BytesIO(base64.b64decode(image_base64))).convert("RGB").resize((224, 224))
+            images = [image]
+            
+            user_content = [
+                {"type": "image", "image": image},
+                {"type": "text", "text": f"Using the ingredients shown in this image, {recipe_prompt}. Provide a detailed recipe with measurements and step-by-step instructions while strictly following the text prompt."}
+            ]
+            
+            messages = [
+                {"role": "system", "content": system_prompt.strip()},
+                {"role": "user", "content": user_content}
+            ]
+        
+        # Generate with double the normal length for detailed recipes
+        recipe = _generate_text(messages, max_tokens=400, temperature=0.7, images=images)
+        return recipe.strip()
+        
+    except Exception as e:
+        traceback.print_exc()
+        return f"Error generating recipe: {str(e)}"
 
 # ==============================
 # FLASK API
@@ -373,10 +470,22 @@ def api_chat():
     )
     return jsonify({"response": result})
 
+@app.route("/generate_recipe", methods=["POST"])
+def api_generate_recipe():
+    """Generate a recipe from text prompt and/or image"""
+    data = request.get_json()
+    result = generate_recipe_remote(
+        recipe_prompt=data.get("recipe_prompt"),
+        image_base64=data.get("image_base64"),
+        mode=data.get("mode", "text_only")
+    )
+    return jsonify({"recipe": result})
+
 # ==============================
 # START SERVER
 # ==============================
-ngrok.set_auth_token('353Nn9GHQSgKzMpFwvEFtDG6uDy_3JT5JoUPpQBeLnrSdvRBL')
+# insert ngrok auth token here
+ngrok.set_auth_token('#YOUR_NGROK_AUTH_TOKEN HERE#')
 public_url = ngrok.connect(5000)
 print("\n" + "="*60)
 print("LLM Server is running!")

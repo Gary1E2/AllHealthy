@@ -5,9 +5,10 @@ import json
 # ==============================
 # CONFIG
 # ==============================
-API_KEY = "AIzaSyB2GDGBE0jWcp9BSLOLs0PZhiuyMi7DW6o"   # <-- replace this with your Web API key
-PROJECT_ID = "diet-app-sg"          # <-- your project ID
-BASE_URL = f"https://firestore.googleapis.com/v1/projects/{PROJECT_ID}/databases/(default)/documents"
+# insert your api key, project id and firestore url here
+API_KEY = "#API_KEY HERE#" 
+PROJECT_ID = "#PROJECT_ID HERE#"
+BASE_URL = f"#FIREBASE_URL HERE#"
 
 # ==============================
 # FIREBASE REST (MOCK SINGLETON)
@@ -158,6 +159,75 @@ def upload_meal(user_id, meal_type, nutrition_data, date_str=None):
         traceback.print_exc()
         return False
 
+
+# ==============================
+# UPDATE USER MACRO GOALS
+# ==============================
+def update_macro_goals(user_id, goals_update):
+    """
+    Update user's daily macro goals in Firestore.
+    
+    Args:
+        user_id: The user's ID
+        goals_update: Dict with keys like 'calories', 'proteins', 'carbs', 'fats'
+                     Only provided keys will be updated
+    
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        init_firebase()
+        
+        url = _get_user_url(user_id)
+        headers = {"Content-Type": "application/json"}
+        
+        # Build the nested field structure for daily_macros_goal
+        macro_fields = {}
+        if 'calories' in goals_update:
+            macro_fields['calories'] = _num_field(goals_update['calories'])
+        if 'proteins' in goals_update:
+            macro_fields['proteins'] = _num_field(goals_update['proteins'])
+        if 'carbs' in goals_update:
+            macro_fields['carbs'] = _num_field(goals_update['carbs'])
+        if 'fats' in goals_update:
+            macro_fields['fats'] = _num_field(goals_update['fats'])
+        
+        # Wrap in the daily_macros_goal map
+        fields = {
+            "daily_macros_goal": {
+                "mapValue": {
+                    "fields": macro_fields
+                }
+            }
+        }
+        
+        payload = {"fields": fields}
+        
+        # Build updateMask to only update the specific macro goal fields
+        mask_parts = []
+        for key in goals_update.keys():
+            mask_parts.append(f"updateMask.fieldPaths=daily_macros_goal.{key}")
+        mask_query = "&" + "&".join(mask_parts) if mask_parts else ""
+        
+        patch_url = url + mask_query
+        print(f"[Firebase REST DEBUG] PATCH URL (macro goals): {patch_url}")
+        print(f"[Firebase REST DEBUG] Payload: {json.dumps(payload)}")
+        
+        response = requests.patch(patch_url, headers=headers, data=json.dumps(payload))
+        
+        if response.status_code not in (200, 201):
+            print(f"[Firebase REST ERROR] {response.status_code}: {response.text}")
+            return False
+        
+        print(f"[Firebase REST] Successfully updated macro goals for {user_id}")
+        print(f"[Firebase REST] Updated goals: {goals_update}")
+        return True
+        
+    except Exception as e:
+        print(f"[Firebase REST ERROR] Failed to update macro goals: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 # ==============================
 # UPLOAD FULL DAY (REST)
