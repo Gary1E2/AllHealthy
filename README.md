@@ -377,10 +377,12 @@ source venv/bin/activate
 
 3. Install buildozer: 
 ```
-pip install cython
+pip install "Cython<3"
 pip install buildozer
+pip install python-for-android
 pip install git+https://github.com/kivy/python-for-android
 ```
+Cython has a bug for versions above 3.0. Use versions before 3.0.
 
 3. Create buildozer.spec for app compilation (Skip to step 5 if buildozer.spec already exists):
 If you havent created a buildozer.spec file, run:
