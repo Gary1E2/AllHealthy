@@ -1,6 +1,17 @@
 # AllHealthy Diet Tracking Mobile App Project
 ## By: Chua Wen Hung Gary @ NYP
 
+# Table of Contents:
+- Project Overview
+- Folder Structure Overview
+- App Architecture
+- How It Works
+- Google Firebase Configuration
+- Instructions for Server Set Up
+- Instructions for Compiling Android App
+- App Usage
+- Nutrition Thresholds
+
 # Project Overview:
 
 AllHealthy is a mobile nutrition tracking app that integrates a multimodal LLM for food image analysis, calorie and macronutrient estimation, and automated logging to a Firebase database. The app is built using Kivy and Google Firebase, compiled for Android with Buildozer.
@@ -107,18 +118,118 @@ flowchart TD
     C --> D
     D --> C
 ```
-## How it works:
-### serverchatbot.py
-A multimodal llm is hosted on a server run on a remote device (in this case I used another laptop). It is exposed with ngrok and uses Flask for API requests.
+# How it works:
+## The Four Main Components
+### 1. **main.py** - The User Interface
+This is what you see and interact with on your phone or computer. It contains:
 
-### chatbot.py
-Functions are defined in this file and are called by main.py when model operations are needed. Each function makes a API request to serverchatbot.py with a payload and receives a response and returns it through main.py
+- **Screens you navigate through:**
+  - Loading screen when the app starts
+  - Main chat screen where you talk to the nutrition assistant
+  - Meal logging screen where you upload food photos
+  - Macro goals screen where you set your daily targets
+  - Recipe generator screen where you create recipes from ingredients
 
-### upload.py
-Functions are defined in this file and are called by main.py when data upload operations are needed. Each function makes a API request to the Firebase Cloud Firestore with data as a payload, uploading user data there.
+- **Visual displays:**
+  - Pie charts showing calories consumed vs. remaining
+  - Progress bars for protein, carbs, and fats
+  - Line graphs displaying 7-day nutrition trends
+  - Chat bubbles for conversations with the AI assistant
 
-### main.py
-This is where all features the user interacts with are present. This program is run to run the app for development and testing.
+- **Input methods:**
+  - Camera to take photos of meals
+  - Image gallery to upload existing photos
+  - Text fields to enter nutrition values or chat messages
+  - Buttons to select meal types (breakfast, lunch, dinner, etc.)
+
+**How it connects:** main.py sends your food photos to chatbot.py for analysis and sends your meal data to upload.py to save in the cloud.
+
+### 2. **upload.py** - The Cloud Storage Manager
+This handles saving and retrieving your data from Firebase (cloud storage). It:
+
+- **Saves your information:**
+  - Logs each meal with its nutrition values (calories, protein, carbs, fats)
+  - Records energy and hunger levels after meals
+  - Stores your daily macro goals
+  - Timestamps everything so you can track by date
+
+- **Retrieves your information:**
+  - Fetches today's meals to show current progress
+  - Gets your macro goals to calculate remaining targets
+  - Pulls 7 days of data for analytics graphs
+
+**How it connects:** main.py calls upload.py whenever you log a meal or update goals. upload.py talks directly to Firebase's online database to store/retrieve data.
+
+### 3. **chatbot.py** - The Communication Bridge
+This is the messenger between your phone and the multimodal LLM. It:
+
+- **Prepares your requests:**
+  - Compresses food photos to smaller sizes for faster sending
+  - Converts images to a format the AI can understand (base64 encoding)
+  - Packages your chat messages with relevant context (today's macros, goals, meals logged)
+
+- **Sends requests to the AI:**
+  - Food photo > "What nutrition is in this meal?"
+  - Meal data > "Give me tips based on what I ate"
+  - Chat message > "Answer this nutrition question"
+  - Text/photo > "Generate a recipe from these ingredients"
+
+- **Returns AI responses:**
+  - Nutrition estimates (calories, protein, carbs, fats)
+  - Food descriptions (what's in the photo)
+  - Personalized advice (tips for your next meal)
+  - Recipe instructions
+
+**How it connects:** main.py calls chatbot.py functions when you take a photo or send a chat. chatbot.py sends these to serverchatbot.py (the AI computer) and brings back the answers.
+
+### 4. **serverchatbot.py** - The Remore Multimodal LLM
+This runs on a powerful computer with the LLM loaded in memory. It:
+
+- **Analyzes food photos:**
+  - Recognizes ingredients and dishes in images
+  - Estimates portion sizes
+  - Calculates nutritional breakdown
+
+- **Generates personalized advice:**
+  - Compares your meal to recommended limits
+  - Detects if you exceeded protein, carbs, or fat targets
+  - Notices if you're still hungry or low on energy
+  - Creates specific tips for your next meal
+
+- **Answers nutrition questions:**
+  - Uses your current progress (macros consumed vs. goals)
+  - Knows which meals you've logged today
+  - Provides relevant, context-aware responses
+
+- **Creates recipes:**
+  - Identifies ingredients in photos
+  - Generates step-by-step cooking instructions
+  - Includes measurements and cooking times
+
+**How it connects:** serverchatbot.py receives requests from chatbot.py through the internet (via ngrok), processes them using the AI model, and sends back results.
+
+## Examples:
+
+### When you log a meal:
+1. **You** take a photo in main.py
+2. **main.py** sends the photo to chatbot.py
+3. **chatbot.py** compresses it and forwards to serverchatbot.py
+4. **serverchatbot.py** analyzes the image with AI and estimates nutrition
+5. **chatbot.py** receives the nutrition data and sends it back
+6. **main.py** displays the results and lets you confirm/edit
+7. **You** rate your energy and hunger levels
+8. **main.py** calls upload.py to save everything
+9. **upload.py** stores the meal in Firebase cloud
+10. **serverchatbot.py** checks if you exceeded any thresholds
+11. **main.py** displays personalized tips from the AI
+
+### When you chat with the assistant:
+1. **You** type a question in main.py
+2. **main.py** sends it to chatbot.py with context (your macros, goals, meals logged)
+3. **chatbot.py** forwards everything to serverchatbot.py
+4. **serverchatbot.py** generates a contextual response using AI
+5. **chatbot.py** receives the answer
+6. **main.py** displays it in the chat
 
 # Firebase Configuration
 ```bash
@@ -327,34 +438,15 @@ Logging the meal will open a survey to get the user's energy and hunger levels a
 4. The user will then be brought back to the chat interface screen where the meal information will be returned in a chat bubble. If the meal exceeds certain thresholds that may impact/interfere with their daily intake goals, the LLM will generate tips to help the user adjust their next meals to counteract execessive intake from their previous meal. **Thresholds can be found below**
 5. On the chat interface screen, users can expand the calorie and macro intake header to see more data on their progress for the past 7 days.
 
-## Thresholds that trigger tips:
-Diet tracking app
-Breakfast:
-Calories: 20%
-Protein: 19%
-Carbs: 26%
-Fats: 21%
+## Thresholds That Trigger Tips Generation:
+The serverchatbot.py uses percentages of the user's daily calorie goals to determine whether the meal they have just logged may interfere with meeting their goal.
 
-Lunch:
-Calories: 31%
-Protein: 34%
-Carbs: 34%
-Fats: 34%
+Meal Type | Calories %
+--- | ---
+Breakfast | 20%
+Lunch | 31%
+Dinner | 29%
+Snack | 9%
+Supper | 11%
 
-Dinner:
-Calories: 29%
-Protein: 30%
-Carbs: 29%
-Fats: 29%
-
-Snack:
-Calories: 9%
-Protein: 9%
-Carbs: 6%
-Fats: 9%
-
-Supper:
-Calories: 11%
-Protein: 8%
-Carbs: 6%
-Fats: 7%
+For the macros, a general percentage is applied to all at 40% of the daily macro goals correspondingly for proteins, fats and carbs.
