@@ -78,7 +78,7 @@ Window.clearcolor = COLORS['main']
 # insert your user id, project id and firebase url here
 USER_ID = "#USER_ID HERE#"
 PROJECT_ID = "#PROJECT_ID HERE#"
-FIREBASE_URL = f"#FIRESTORE_URL HERE#"
+FIREBASE_URL = f"https://firestore.googleapis.com/v1/projects/{PROJECT_ID}/databases/(default)/documents"
 # Window.size = (360, 640)  # Comment out when compiling to mobile
 
 # Load KV file
