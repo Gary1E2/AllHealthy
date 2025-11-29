@@ -8,7 +8,7 @@ import json
 # insert your api key, project id and firestore url here
 API_KEY = "#API_KEY HERE#" 
 PROJECT_ID = "#PROJECT_ID HERE#"
-BASE_URL = f"#FIREBASE_URL HERE#"
+BASE_URL = f"https://firestore.googleapis.com/v1/projects/{PROJECT_ID}/databases/(default)/documents"
 
 # ==============================
 # FIREBASE REST (MOCK SINGLETON)

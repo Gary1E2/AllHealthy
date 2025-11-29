@@ -10,7 +10,7 @@ import traceback
 # CONFIG
 # ==============================
 # insert your ngrok url here
-NGROK_URL = "https://unsurgical-semiliberally-myron.ngrok-free.dev"
+NGROK_URL = "https://#NGROK_URL HERE#"
 REQUEST_TIMEOUT = 500
 CHAT_TIMEOUT = 120
 
