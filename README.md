@@ -66,100 +66,14 @@ AllHealthy is a mobile nutrition tracking app that integrates a multimodal LLM f
 - Supports WSL2 for building
 - GPU inference handled remotely (zero on-device AI load)
 - Debug and release build setup
-- Support for Docker deployment
+- Support for Docker deployment (planned)
 
-# Table of Contents:
-- Quick Start
-- Prerequisites
-- Folder Structure Overview
-- App Architecture
-- How It Works
-- Google Firebase Configuration
-- Instructions for Using Your Own Resources
-- Instructions for Server Set Up
-- Instructions for Compiling Android App
-- App Usage
-- Nutrition Thresholds
-
-# Quick Start:
-Note: LLM features require the serverchatbot docker container or .py file to be running.
-
-1. Replacing/Using your own resources:
-```
-# main.py:
-USER_ID = "#USER_ID#"
-PROJECT_ID = "#PROJECT_ID#"
-FIREBASE_URL = f"https://firestore.googleapis.com/v1/projects/{PROJECT_ID}/databases/(default)/documents"
-
-# chatbot.py:
-NGROK_URL = "#NGROK_DOMAIN_URL#"
-
-# serverchatbot.py:
-ngrok.set_auth_token('#YOUR_NGROK_AUTH_TOKEN HERE#')
-
-# upload.py:
-API_KEY = "#FIREBASE_API_KEY#" 
-PROJECT_ID = "#PROJECT_ID#"
-BASE_URL = f"https://firestore.googleapis.com/v1/projects/{PROJECT_ID}/databases/(default)/documents"
-```
-2. Running Server Chatbot:
-- Open or leave docker desktop running
-- Use a terminal that can run a run.sh docker container to run the commands:
-```
-cd <path/folder of serverchatbot.py>
-bash run.sh
-```
-- Close server with the following input:
-```
-ctrl + c
-```
-3. Compiling Android APK:
-```
-# Run following pip install commands using Linux or one of it's distros:
-sudo apt update
-
-sudo apt install -y \
-    python3 python3-pip python3-setuptools python3-dev \
-    build-essential \
-    git \
-    zip unzip \
-    openjdk-17-jdk \
-    libncurses5 libncurses5-dev \
-    zlib1g zlib1g-dev \
-    libstdc++6 \
-    autoconf automake libtool \
-    pkg-config \
-    cmake \
-    libffi-dev \
-    libssl-dev \
-    cython3 \
-    libjpeg-dev libpng-dev \
-    libsqlite3-dev
-
-# For WSL:
-sudo apt install libglu1-mesa
-
-# Create a python environment in project folder:
-python3 -m venv venv
-source venv/bin/activate
-
-# Install buildozer:
-pip install "Cython<3"
-pip install buildozer
-pip install python-for-android
-pip install git+https://github.com/kivy/python-for-android
-
-# Compile APK Commands:
-buildozer android debug (test build, fastest)
-buildozer android release (full build, slowest)
-buildozer android clean (clean previous builds to remove errors)
-```
-
-# Prerequisites:
-1. Python Version: 3.10.x
-2. Hardware Requirements: GPU with suitable architecture for torch CUDA operations.
-3. Firebase Account: Free project + Cloud Firestore **Configuration can be found below**
-4. ngrok account: Free public domain + auth token
+### 7. Pending/To-Fix Features
+- Remove duplicate post-meal tips
+- Support taking photos (done, needs debugging)
+- Recipe generation (on hold)
+- Fix desktop keyboard display
+- Fix mobile meal logging form
 
 # Folder Structure Overview:
 ```bash
